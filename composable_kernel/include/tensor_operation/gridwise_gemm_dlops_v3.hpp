@@ -795,7 +795,7 @@ __global__ void
                                           const FloatAB* __restrict__ p_b_grid,
                                           const FloatBias* __restrict__ p_bias_grid,
                                           const FloatScale* __restrict__ p_scale_grid,
-                                          FloatC* __restrict__ p_c_grid,
+                                          // FloatC* __restrict__ p_c_grid,
                                           FloatD* __restrict__ p_d_grid)
 {
     constexpr index_t shared_block_size =
@@ -859,35 +859,16 @@ __global__ void
     constexpr auto d_k1x_n_h2_w2_thread_gemm_desc = GridwiseGemm::MakeDK1xNH2W2ThreadDescriptor();
 
     StaticBuffer<AddressSpaceEnum_t::Vgpr,
-                 FloatC,
-                 c_k1_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(),
-                 true>
-        d_thread_buf;
-
-    // Bias
-    GridwiseGemm::BiasActivRequantOp(bias_global_buf,
-                                     scale_global_buf,
-                                     c_thread_buf,
-                                     d_thread_buf,
-                                     c_k_n_h_w_block_cluster_idx,
-                                     c_thread_mtx_index,
-                                     bias_k0_k1_grid_desc,
-                                     c_k1_n_h2_w2_thread_gemm_desc);
-
-    auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
-        p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
-
-    GridwiseGemm::WriteOut(d_thread_buf,
-                           c_global_buf,
-                           c_k_n_h_w_block_cluster_idx,
-                           c_thread_mtx_index,
-                           c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
-
-    StaticBuffer<AddressSpaceEnum_t::Vgpr,
                  FloatD,
                  d_k1x_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(),
                  true>
         e_thread_buf;
+
+    // StaticBuffer<AddressSpaceEnum_t::Vgpr,
+    // FloatC,
+    // c_k1_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(),
+    // true>
+    // d_thread_buf;
 
     // Bias
     GridwiseGemm::BiasActivRequantInt4Op(bias_global_buf,
@@ -899,6 +880,20 @@ __global__ void
                                          bias_k0_k1_grid_desc,
                                          c_k1_n_h2_w2_thread_gemm_desc,
                                          d_k1x_n_h2_w2_thread_gemm_desc);
+
+    // auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+    // p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    // GridwiseGemm::WriteOut(d_thread_buf,
+    // c_global_buf,
+    // c_k_n_h_w_block_cluster_idx,
+    // c_thread_mtx_index,
+    // c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
+    // GridwiseGemm::RequantInt4Op(
+    // d_thread_buf, e_thread_buf, c_k1_n_h2_w2_thread_gemm_desc, d_k1x_n_h2_w2_thread_gemm_desc);
+
+    // static_for<0, d_k1x_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(), 1>{}(
+    //[&](auto i) { e_thread_buf(i) = 0; });
 
     auto d_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_d_grid, d_k0_k1x_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
@@ -1568,13 +1563,14 @@ struct GridwiseGemmDlops_km_kn_mn_v3
         constexpr auto c_k1_n_h2_w2_thread_gemm_desc  = CThreadDesc_K1_N_H2_W2{};
         constexpr auto d_k1x_n_h2_w2_thread_gemm_desc = DThreadDesc_K1x_N_H2_W2{};
 
-        static_for<0, KPerThread / 2, 1>{}([&](auto ki) {
+        static_for<0, d_k1x_n_h2_w2_thread_gemm_desc.GetLength(I0), 1>{}([&](auto ki) {
             static_for<0, HoPerThread, 1>{}([&](auto hi) {
                 static_for<0, WoPerThread, 1>{}([&](auto wi) {
                     constexpr index_t c_offset0 = c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
                         make_tuple(ki * 2, 0, hi, wi));
                     constexpr index_t c_offset1 = c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
                         make_tuple(ki * 2 + 1, 0, hi, wi));
+
                     int8_t low  = c_thread_buf[Number<c_offset0>{}];
                     int8_t high = c_thread_buf[Number<c_offset1>{}];
 
@@ -1680,20 +1676,7 @@ struct GridwiseGemmDlops_km_kn_mn_v3
                                       scale_thread_buf,
                                       hacks);
 
-        // static_for<0, KPerThread, 1>{}([&](auto ki) {
-        // static_for<0, HoPerThread, 1>{}([&](auto hi) {
-        // static_for<0, WoPerThread, 1>{}([&](auto wi) {
-        // constexpr index_t c_offset =
-        // c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(make_tuple(ki, 0, hi, wi));
-        // auto tmp = c_thread_buf[Number<c_offset>{}] + bias_thread_buf[ki];
-        // const auto element_wise_op =
-        // ck::tensor_operation::element_wise::HardTanhQuant{scale_thread_buf[ki]};
-        // d_thread_buf(Number<c_offset>{}) = element_wise_op(tmp);
-        //});
-        //});
-        //});
-
-        static_for<0, KPerThread / 2, 1>{}([&](auto ki) {
+        static_for<0, d_k1x_n_h2_w2_thread_gemm_desc.GetLength(I0), 1>{}([&](auto ki) {
             static_for<0, HoPerThread, 1>{}([&](auto hi) {
                 static_for<0, WoPerThread, 1>{}([&](auto wi) {
                     constexpr auto k_l = Number<ki * 2>{};
@@ -2055,7 +2038,7 @@ struct GridwiseGemmDlops_km_kn_mn_v3
             Sequence<I1, KPerThread / 2, I1, I1, I1, HoPerThread, I1, I1, WoPerThread>,
             CThreadTransferSrcDstAccessOrder,
             CThreadTransferSrcDstVectorDim,
-            CThreadTransferDstScalarPerVector,
+            KPerThread / 2,
             CGlobalMemoryDataOperation,
             1,
             true>(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
