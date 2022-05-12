@@ -25,6 +25,7 @@ enum ConvForwardAlgo
 template <typename TIn,
           typename TWei,
           typename TOut,
+          typename TOutPacked,
           typename ConvStrides,
           typename ConvDilations,
           typename InLeftPads,
@@ -32,6 +33,7 @@ template <typename TIn,
 void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                    const Tensor<TWei>& wei,
                                    Tensor<TOut>& out,
+                                   Tensor<TOutPacked>& out_pack,
                                    const ConvStrides& conv_strides,
                                    const ConvDilations& conv_dilations,
                                    const InLeftPads& in_left_pads,
@@ -61,14 +63,14 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                         {
                             if(is_same<TIn, int4x2_t>::value)
                             {
-                                int32x2_t ax2 = type_convert<int32x2_t>(in(n, c0, hi, wi, c1));
-                                int32x2_t bx2 = type_convert<int32x2_t>(wei(k, c0, y, x, c1));
+                                int8x2_t ax2 = type_convert<int8x2_t>(in(n, c0, hi, wi, c1));
+                                int8x2_t bx2 = type_convert<int8x2_t>(wei(k, c0, y, x, c1));
 
-                                int32_t a0 = vector_type<int32_t, 2>{ax2}.AsType<int32_t>()[I0];
-                                int32_t a1 = vector_type<int32_t, 2>{ax2}.AsType<int32_t>()[I1];
+                                int8_t a0 = vector_type<int8_t, 2>{ax2}.AsType<int8_t>()[I0];
+                                int8_t a1 = vector_type<int8_t, 2>{ax2}.AsType<int8_t>()[I1];
 
-                                int32_t b0 = vector_type<int32_t, 2>{bx2}.AsType<int32_t>()[I0];
-                                int32_t b1 = vector_type<int32_t, 2>{bx2}.AsType<int32_t>()[I1];
+                                int8_t b0 = vector_type<int8_t, 2>{bx2}.AsType<int8_t>()[I0];
+                                int8_t b1 = vector_type<int8_t, 2>{bx2}.AsType<int8_t>()[I1];
 
                                 // std::cout << "a{" << a0 << "," << a1 << "} b{" << b0 << "," << b1
                                 //<< "}" << std::endl;
@@ -90,13 +92,32 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
         out(n, k0, ho, wo, k1) = v;
     };
 
+    auto f_pack = [&](auto n, auto k0, auto ho, auto wo) {
+        for(int k1 = 0; k1 < out_pack.mDesc.GetLengths()[4]; ++k1)
+        {
+            int8_t low  = out(n, k0, ho, wo, k1 * 2);
+            int8_t high = out(n, k0, ho, wo, k1 * 2 + 1);
+
+            ck::int8x2_t tmp{low, high};
+
+            ck::int4x2_t v = ck::type_convert<ck::int4x2_t>(tmp);
+
+            out_pack(n, k0, ho, wo, k1) = v;
+        }
+    };
+
     make_ParallelTensorFunctor(f_nchwc,
                                out.mDesc.GetLengths()[0],
                                out.mDesc.GetLengths()[1],
                                out.mDesc.GetLengths()[2],
                                out.mDesc.GetLengths()[3],
-                               // out.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
-                               out.mDesc.GetLengths()[4])(1);
+                               out.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
+
+    make_ParallelTensorFunctor(f_pack,
+                               out_pack.mDesc.GetLengths()[0],
+                               out_pack.mDesc.GetLengths()[1],
+                               out_pack.mDesc.GetLengths()[2],
+                               out_pack.mDesc.GetLengths()[3])(std::thread::hardware_concurrency());
 }
 
 int main(int argc, char* argv[])
@@ -342,12 +363,14 @@ int main(int argc, char* argv[])
         host_direct_convolution_nchwc(in,
                                       wei,
                                       out_host,
+                                      out_packed_host,
                                       make_tuple(conv_stride_h, conv_stride_w),
                                       make_tuple(conv_dilation_h, conv_dilation_w),
                                       make_tuple(in_left_pad_h, in_left_pad_w),
                                       make_tuple(in_right_pad_h, in_right_pad_w));
 
         check_error(out_host, out_device);
+        check_error(out_packed_host, out_packed_device);
 
         if(do_log)
         {

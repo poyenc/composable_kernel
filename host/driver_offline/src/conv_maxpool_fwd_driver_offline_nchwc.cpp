@@ -248,7 +248,7 @@ int main(int argc, char* argv[])
     using bias_data_t    = half_t;
     using out_data_t     = half_t;
 #elif 1
-    using in_data_t    = int8_t;
+    using in_data_t    = int4x2_t;
     using acc_data_t   = int32_t;
     using bias_data_t  = int32_t;
     using scale_data_t = float;
@@ -291,8 +291,8 @@ int main(int argc, char* argv[])
     Tensor<scale_data_t> scale(bias_lengths_host);
     Tensor<out_data_t> out_device(out_lengths_host);
     Tensor<out_data_t> out_host(out_lengths_host);
-    Tensor<in_data_t> max_device(max_lengths_host);
-    Tensor<in_data_t> max_host(max_lengths_host);
+    Tensor<out_data_t> max_device(max_lengths_host);
+    Tensor<out_data_t> max_host(max_lengths_host);
 
     ostream_HostTensorDescriptor(in.mDesc, std::cout << "in: ");
     ostream_HostTensorDescriptor(wei.mDesc, std::cout << "wei: ");
@@ -325,10 +325,10 @@ int main(int argc, char* argv[])
         in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
-    case 5:
-        in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
-        break;
+    // case 5:
+    // in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
+    // wei.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
+    // break;
     default:
         in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{1, 5}, num_thread);
 

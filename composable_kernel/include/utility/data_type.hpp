@@ -956,22 +956,22 @@ __host__ __device__ Y type_convert(X x)
 }
 
 template <>
-inline __host__ __device__ int32x2_t type_convert(int4x2_t x)
+inline __host__ __device__ int8x2_t type_convert(int4x2_t x)
 {
-    int32_t high = x >> 4;
-    int32_t low  = x & 0b00001111;
+    int8_t high = x >> 4;
+    int8_t low  = x & 0b00001111;
 
-    return int32x2_t{low, high};
+    return int8x2_t{low, high};
 }
 
 template <>
-inline __host__ __device__ int4x2_t type_convert(int32x2_t x)
+inline __host__ __device__ int4x2_t type_convert(int8x2_t x)
 {
     constexpr auto I0 = Number<0>{};
     constexpr auto I1 = Number<1>{};
 
-    int8_t low  = vector_type<int32_t, 2>{x}.AsType<int32_t>()[I0];
-    int8_t high = vector_type<int32_t, 2>{x}.AsType<int32_t>()[I1];
+    int8_t low  = vector_type<int8_t, 2>{x}.AsType<int8_t>()[I0];
+    int8_t high = vector_type<int8_t, 2>{x}.AsType<int8_t>()[I1];
 
     return (high << 4) + (low & 0b00001111);
 }

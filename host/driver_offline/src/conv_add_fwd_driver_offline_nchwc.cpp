@@ -236,7 +236,7 @@ int main(int argc, char* argv[])
     using acc_data_t    = float;
     using out_data_t    = half_t;
 #elif 1
-    using in_data_t    = int8_t;
+    using in_data_t    = int4x2_t;
     using acc_data_t   = int32_t;
     using bias_data_t  = int32_t;
     using scale_data_t = float;
@@ -275,9 +275,9 @@ int main(int argc, char* argv[])
 
     Tensor<in_data_t> in(in_lengths_host);
     Tensor<in_data_t> wei(wei_lengths_host);
-    Tensor<in_data_t> add(add_lengths_host);
-    Tensor<in_data_t> add_device(add_lengths_host);
-    Tensor<in_data_t> add_host(add_lengths_host);
+    Tensor<out_data_t> add(add_lengths_host);
+    Tensor<out_data_t> add_device(add_lengths_host);
+    Tensor<out_data_t> add_host(add_lengths_host);
     Tensor<bias_data_t> bias(bias_lengths_host);
     Tensor<scale_data_t> scale(bias_lengths_host);
     Tensor<out_data_t> out_host(out_lengths_host);
@@ -314,10 +314,10 @@ int main(int argc, char* argv[])
         in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
-    case 5:
-        in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
-        break;
+    // case 5:
+    // in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
+    // wei.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
+    // break;
     default:
         in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{1, 5}, num_thread);
 
