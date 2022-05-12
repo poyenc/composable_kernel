@@ -188,10 +188,10 @@ int main(int argc, char* argv[])
     const int nrepeat          = std::stoi(argv[5]);
 
     constexpr auto N  = Number<1>{};
-    constexpr auto Hi = Number<16>{};
-    constexpr auto Wi = Number<64>{};
-    constexpr auto Y  = Number<1>{};
-    constexpr auto X  = Number<1>{};
+    constexpr auto Hi = Number<1080>{};
+    constexpr auto Wi = Number<1920>{};
+    constexpr auto Y  = Number<3>{};
+    constexpr auto X  = Number<3>{};
     constexpr auto C0 = Number<2>{};
     constexpr auto C1 = Number<8>{};
     constexpr auto K0 = Number<2>{};
@@ -204,10 +204,10 @@ int main(int argc, char* argv[])
     constexpr auto conv_dilation_h = I1;
     constexpr auto conv_dilation_w = I1;
 
-    constexpr auto in_left_pad_h  = I0;
-    constexpr auto in_left_pad_w  = I0;
-    constexpr auto in_right_pad_h = I0;
-    constexpr auto in_right_pad_w = I0;
+    constexpr auto in_left_pad_h  = I1;
+    constexpr auto in_left_pad_w  = I1;
+    constexpr auto in_right_pad_h = I1;
+    constexpr auto in_right_pad_w = I1;
 
     constexpr auto YEff = (Y - I1) * conv_dilation_h + I1;
     constexpr auto XEff = (X - I1) * conv_dilation_w + I1;
@@ -291,15 +291,15 @@ int main(int argc, char* argv[])
         break;
     case 2:
         in.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
+        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
     case 3:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
+        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         break;
     case 4:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 3}, num_thread);
+        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
     // case 5:
     // in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
@@ -369,7 +369,7 @@ int main(int argc, char* argv[])
                                       make_tuple(in_left_pad_h, in_left_pad_w),
                                       make_tuple(in_right_pad_h, in_right_pad_w));
 
-        check_error(out_host, out_device);
+        // check_error(out_host, out_device);
         check_error(out_packed_host, out_packed_device);
 
         if(do_log)

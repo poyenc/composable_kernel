@@ -345,7 +345,7 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
                     GridwiseGemm,
                     FloatAB,
                     FloatAcc,
-                    FloatC,
+                    // FloatC,
                     FloatD,
                     remove_reference_t<AGridDesc_E0_E1_K0_K1_E2>,
                     remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,
@@ -361,7 +361,7 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
                                                   0,
                                                   p_a_grid,
                                                   p_b_grid,
-                                                  p_c_grid,
+                                                  // p_c_grid,
                                                   p_d_grid);
             }
         }

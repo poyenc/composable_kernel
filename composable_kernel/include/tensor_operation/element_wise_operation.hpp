@@ -108,40 +108,6 @@ struct Relu
     }
 };
 
-struct Int4Quant
-{
-    // FIXME: We just need one scale for Relu / Leaky Relu / PRelu
-    __host__ __device__ Int4Quant(float scaleRelu) : scale_(scaleRelu) {}
-
-    inline __host__ __device__ constexpr int8_t quant(int32_t x) const
-    {
-        float gemm_c_float = static_cast<float>(x);
-        float requant      = scale_ * gemm_c_float;
-
-        int8_t y = static_cast<int8_t>(requant > 63 ? 63 : requant < -64 ? -64 : requant);
-
-        return y;
-    }
-
-    __host__ __device__ constexpr int4x2_t operator()(const int32x2_t& x) const
-    {
-        constexpr auto I0 = Number<0>{};
-        constexpr auto I1 = Number<1>{};
-
-        int32_t x0 = vector_type<int32_t, 2>{x}.AsType<int32_t>()[I0];
-        int32_t x1 = vector_type<int32_t, 2>{x}.AsType<int32_t>()[I1];
-
-        int8_t high = quant(x0);
-        int8_t low  = quant(x1);
-
-        int4x2_t y = (high << 4) + (low & 0b00001111);
-
-        return y;
-    }
-
-    float scale_;
-};
-
 struct HardTanhQuant
 {
     // FIXME: We just need one scale for Relu / Leaky Relu / PRelu
@@ -149,9 +115,9 @@ struct HardTanhQuant
 
     __host__ __device__ constexpr int8_t operator()(const int32_t& x) const
     {
-        float gemm_c_float = static_cast<float>(x);
-        float hard_tanh    = gemm_c_float > 1 ? 1 : (gemm_c_float < -1 ? -1 : gemm_c_float);
-        float tanh_requant = scale_ * hard_tanh;
+        float gemm_c_float = scale_ * static_cast<float>(x);
+        // float hard_tanh    = gemm_c_float > 1 ? 1 : (gemm_c_float < -1 ? -1 : gemm_c_float);
+        float tanh_requant = gemm_c_float;
         int8_t y           = static_cast<int8_t>(
             tanh_requant > 127 ? 127 : tanh_requant < -128 ? -128 : tanh_requant);
         return y;

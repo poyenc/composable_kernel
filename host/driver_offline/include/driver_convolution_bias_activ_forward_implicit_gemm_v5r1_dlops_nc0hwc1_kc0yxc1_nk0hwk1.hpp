@@ -12,6 +12,7 @@ template <ck::index_t BlockSize,
           typename FloatBias,
           typename FloatScale,
           typename FloatC,
+          typename FloatD,
           ck::index_t E1_,
           ck::index_t E2_,
           ck::index_t K2_,
@@ -53,6 +54,7 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
                        const FloatBias* __restrict__ p_bias_grid,
                        const FloatScale* __restrict__ p_scale_grid,
                        FloatC* __restrict__ p_c_grid,
+                       FloatD* __restrict__ p_d_grid,
                        const int nrepeat) const
     {
         using namespace ck;
@@ -73,6 +75,8 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
         const auto Ho = out_n_k0_ho_wo_k1_global_desc.GetLength(I2);
         const auto Wo = out_n_k0_ho_wo_k1_global_desc.GetLength(I3);
         const auto K1 = out_n_k0_ho_wo_k1_global_desc.GetLength(I4);
+
+        const auto K1Packed = Number<K1 / I2>{};
 
         const auto K = wei_k_c0_y_x_c1_global_desc.GetLength(I0);
         const auto Y = wei_k_c0_y_x_c1_global_desc.GetLength(I2);
@@ -184,6 +188,15 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             make_tuple(Sequence<1, 4>{}, Sequence<0>{}, Sequence<2>{}, Sequence<3>{}),
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}));
 
+        const auto d_kx_n_hop_wop_grid_desc = transform_tensor_descriptor(
+            make_naive_tensor_descriptor_packed(make_tuple(N, K0, Ho, Wo, K1Packed)),
+            make_tuple(make_merge_transform(make_tuple(K0, K1Packed)),
+                       make_pass_through_transform(N),
+                       make_pad_transform(Ho, I0, OutRightPadH),
+                       make_pad_transform(Wo, I0, OutRightPadW)),
+            make_tuple(Sequence<1, 4>{}, Sequence<0>{}, Sequence<2>{}, Sequence<3>{}),
+            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}));
+
         std::cerr << "Hop = " << Hop << " Wop = " << Wop << std::endl;
 
         if(!((K % KPerBlock) == 0 && (Hop % HoPerBlock) == 0 && (Wop % WoPerBlock) == 0 &&
@@ -238,10 +251,15 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
         const auto c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc =
             GridwiseGemm::MakeCK0K1NH0H1H2W0W1W2GridDescriptor(c_k_n_hop_wop_grid_desc);
 
+        const auto d_k0_k1x_n_h0_h1_h2_w0_w1_w2_grid_desc =
+            GridwiseGemm::MakeDK0K1xNH0H1H2W0W1W2GridDescriptor(d_kx_n_hop_wop_grid_desc);
+
         using AGridDesc_E0_E1_K0_K1_E2 = decltype(a_e0_e1_k0_k1_e2_grid_desc);
         using BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2 =
             decltype(b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc);
         using CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2 = decltype(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
+        using DGridDesc_K0_K1x_N_H0_H1_H2_W0_W1_W2 =
+            decltype(d_k0_k1x_n_h0_h1_h2_w0_w1_w2_grid_desc);
 
         const auto grid_size = (K / KPerBlock) * (Hop / HoPerBlock) * (Wop / WoPerBlock) * N;
 
@@ -347,16 +365,18 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             }
 #else
             {
-                const auto kernel = kernel_gemm_bias_activ_dlops_v3_per_channel<
+                const auto kernel = kernel_gemm_bias_activ_dlops_int4<
                     GridwiseGemm,
                     FloatAB,
                     FloatAcc,
                     FloatBias,
                     FloatScale,
                     FloatC,
+                    FloatD,
                     remove_reference_t<AGridDesc_E0_E1_K0_K1_E2>,
                     remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,
                     remove_reference_t<CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2>,
+                    remove_reference_t<DGridDesc_K0_K1x_N_H0_H1_H2_W0_W1_W2>,
                     remove_reference_t<CBlockIdToBlockClusterAdaptor_K_N_H_W>,
                     has_main_e0_block_loop,
                     activ_type>;
@@ -370,7 +390,8 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
                                                   p_b_grid,
                                                   p_bias_grid,
                                                   p_scale_grid,
-                                                  p_c_grid);
+                                                  p_c_grid,
+                                                  p_d_grid);
             }
 #endif
         }
