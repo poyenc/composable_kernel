@@ -28,6 +28,7 @@ template <typename TIn,
           typename TBias,
           typename TScale,
           typename TOut,
+          typename TOutPacked,
           typename ConvStrides,
           typename ConvDilations,
           typename InLeftPads,
@@ -38,7 +39,8 @@ void host_direct_convolution_maxpool2x2_nchwc(const Tensor<TIn>& in,
                                               const Tensor<TBias>& bias,
                                               const Tensor<TScale>& scale,
                                               Tensor<TOut>& out_host,
-                                              Tensor<TOut>& max_host,
+                                              Tensor<TOutPacked>& out_packed_host,
+                                              Tensor<TOutPacked>& max_host,
                                               const ConvStrides& conv_strides,
                                               const ConvDilations& conv_dilations,
                                               const InLeftPads& in_left_pads,
@@ -67,8 +69,28 @@ void host_direct_convolution_maxpool2x2_nchwc(const Tensor<TIn>& in,
                     {
                         for(int c1 = 0; c1 < wei.mDesc.GetLengths()[4]; ++c1)
                         {
-                            v += static_cast<const float>(in(n, c0, hi, wi, c1)) *
-                                 static_cast<const float>(wei(k, c0, y, x, c1));
+                            if(is_same<TIn, int4x2_t>::value)
+                            {
+                                int8x2_t ax2 = type_convert<int8x2_t>(in(n, c0, hi, wi, c1));
+                                int8x2_t bx2 = type_convert<int8x2_t>(wei(k, c0, y, x, c1));
+
+                                int8_t a0 = vector_type<int8_t, 2>{ax2}.AsType<int8_t>()[I0];
+                                int8_t a1 = vector_type<int8_t, 2>{ax2}.AsType<int8_t>()[I1];
+
+                                int8_t b0 = vector_type<int8_t, 2>{bx2}.AsType<int8_t>()[I0];
+                                int8_t b1 = vector_type<int8_t, 2>{bx2}.AsType<int8_t>()[I1];
+
+                                // std::cout << "a{" << a0 << "," << a1 << "} b{" << b0 << "," << b1
+                                //<< "}" << std::endl;
+
+                                v += a0 * b0;
+                                v += a1 * b1;
+                            }
+                            else
+                            {
+                                v += type_convert<float>(in(n, c0, hi, wi, c1)) *
+                                     type_convert<float>(wei(k, c0, y, x, c1));
+                            }
                         }
                     }
                 }
@@ -88,14 +110,35 @@ void host_direct_convolution_maxpool2x2_nchwc(const Tensor<TIn>& in,
                                out_host.mDesc.GetLengths()[3],
                                out_host.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
 
+    auto f_pack = [&](auto n, auto k0, auto ho, auto wo) {
+        for(int k1 = 0; k1 < out_packed_host.mDesc.GetLengths()[4]; ++k1)
+        {
+            int8_t low  = out_host(n, k0, ho, wo, k1 * 2);
+            int8_t high = out_host(n, k0, ho, wo, k1 * 2 + 1);
+
+            ck::int8x2_t tmp{low, high};
+
+            ck::int4x2_t v = ck::type_convert<ck::int4x2_t>(tmp);
+
+            out_packed_host(n, k0, ho, wo, k1) = v;
+        }
+    };
+
+    make_ParallelTensorFunctor(f_pack,
+                               out_packed_host.mDesc.GetLengths()[0],
+                               out_packed_host.mDesc.GetLengths()[1],
+                               out_packed_host.mDesc.GetLengths()[2],
+                               out_packed_host.mDesc.GetLengths()[3])(
+        std::thread::hardware_concurrency());
+
     auto maxpool2x2_nchwc = [&](auto n, auto k0, auto ho, auto wo, auto k1) {
         auto hx = ho * 2;
         auto wx = wo * 2;
 
-        auto v0 = out_host(n, k0, hx, wx, k1);
-        auto v1 = out_host(n, k0, hx, wx + 1, k1);
-        auto v2 = out_host(n, k0, hx + 1, wx, k1);
-        auto v3 = out_host(n, k0, hx + 1, wx + 1, k1);
+        auto v0 = out_packed_host(n, k0, hx, wx, k1);
+        auto v1 = out_packed_host(n, k0, hx, wx + 1, k1);
+        auto v2 = out_packed_host(n, k0, hx + 1, wx, k1);
+        auto v3 = out_packed_host(n, k0, hx + 1, wx + 1, k1);
 
         max_host(n, k0, ho, wo, k1) = std::max({v0, v1, v2, v3});
     };
@@ -248,11 +291,12 @@ int main(int argc, char* argv[])
     using bias_data_t    = half_t;
     using out_data_t     = half_t;
 #elif 1
-    using in_data_t    = int4x2_t;
-    using acc_data_t   = int32_t;
-    using bias_data_t  = int32_t;
-    using scale_data_t = float;
-    using out_data_t   = int8_t;
+    using in_data_t         = int4x2_t;
+    using acc_data_t        = int32_t;
+    using bias_data_t       = int32_t;
+    using scale_data_t      = float;
+    using out_data_t        = int8_t;
+    using out_packed_data_t = int4x2_t;
 #endif
 
     std::vector<std::size_t> in_lengths_host(5), wei_lengths_host(5), out_lengths_host(5),
@@ -280,7 +324,7 @@ int main(int argc, char* argv[])
     max_lengths_host[1] = static_cast<std::size_t>(K0);
     max_lengths_host[2] = static_cast<std::size_t>(HoMax);
     max_lengths_host[3] = static_cast<std::size_t>(WoMax);
-    max_lengths_host[4] = static_cast<std::size_t>(K1);
+    max_lengths_host[4] = static_cast<std::size_t>(K1 / 2);
 
     bias_lengths_host[0] = static_cast<std::size_t>(K0);
     bias_lengths_host[1] = static_cast<std::size_t>(K1);
@@ -291,8 +335,20 @@ int main(int argc, char* argv[])
     Tensor<scale_data_t> scale(bias_lengths_host);
     Tensor<out_data_t> out_device(out_lengths_host);
     Tensor<out_data_t> out_host(out_lengths_host);
-    Tensor<out_data_t> max_device(max_lengths_host);
-    Tensor<out_data_t> max_host(max_lengths_host);
+
+    std::vector<std::size_t> out_packed_lengths_host(5);
+
+    out_packed_lengths_host[0] = static_cast<std::size_t>(N);
+    out_packed_lengths_host[1] = static_cast<std::size_t>(K0);
+    out_packed_lengths_host[2] = static_cast<std::size_t>(Ho);
+    out_packed_lengths_host[3] = static_cast<std::size_t>(Wo);
+    out_packed_lengths_host[4] = static_cast<std::size_t>(K1 / 2);
+
+    Tensor<out_packed_data_t> out_packed_host(out_packed_lengths_host);
+    Tensor<out_packed_data_t> out_packed_device(out_packed_lengths_host);
+
+    Tensor<out_packed_data_t> max_device(max_lengths_host);
+    Tensor<out_packed_data_t> max_host(max_lengths_host);
 
     ostream_HostTensorDescriptor(in.mDesc, std::cout << "in: ");
     ostream_HostTensorDescriptor(wei.mDesc, std::cout << "wei: ");
@@ -322,8 +378,8 @@ int main(int argc, char* argv[])
         wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         break;
     case 4:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
+        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
         break;
     // case 5:
     // in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
@@ -372,6 +428,7 @@ int main(int argc, char* argv[])
             bias_data_t,
             scale_data_t,
             out_data_t,
+            out_packed_data_t,
             activ_type>(tmp[I0], // in_lengths_dev
                         tmp[I1], // wei_lengths_dev
                         tmp[I2], // max_lengths_dev
@@ -385,6 +442,7 @@ int main(int argc, char* argv[])
                         bias,
                         scale,
                         out_device,
+                        out_packed_device,
                         max_device,
                         nrepeat);
     }
@@ -398,6 +456,7 @@ int main(int argc, char* argv[])
             bias,
             scale,
             out_host,
+            out_packed_host,
             max_host,
             make_tuple(conv_stride_h, conv_stride_w),
             make_tuple(conv_dilation_h, conv_dilation_w),
@@ -406,16 +465,20 @@ int main(int argc, char* argv[])
             ck::tensor_operation::element_wise::HardTanhQuant{0.3});
 
         check_error(out_host, out_device);
+        check_error(out_packed_host, out_packed_device);
         check_error(max_host, max_device);
 
         if(do_log)
         {
             // LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
             // LogRangeAsType<float>(std::cout << "wei: ", wei.mData, ",") << std::endl;
-            // LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") <<
+            LogRangeAsType<float>(std::cout << "out_packed_device: ", out_packed_device.mData, ",")
+                << std::endl;
+            LogRangeAsType<float>(std::cout << "out_packed_host: ", out_packed_host.mData, ",")
+                << std::endl;
+            // LogRangeAsType<float>(std::cout << "max_host: ", max_host.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "max_device: ", max_device.mData, ",") <<
             // std::endl;
-            LogRangeAsType<float>(std::cout << "max_host: ", max_host.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "max_device: ", max_device.mData, ",") << std::endl;
         }
     }
 }
