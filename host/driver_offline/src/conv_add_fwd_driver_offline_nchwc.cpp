@@ -27,6 +27,7 @@ template <typename TIn,
           typename TBias,
           typename TScale,
           typename TOut,
+          typename TOutPacked,
           typename ConvStrides,
           typename ConvDilations,
           typename InLeftPads,
@@ -37,7 +38,7 @@ void host_direct_convolution_add_nchwc(const Tensor<TIn>& in,
                                        const Tensor<TBias>& bias,
                                        const Tensor<TScale>& scale,
                                        Tensor<TOut>& out_host,
-                                       Tensor<TOut>& add_host,
+                                       Tensor<TOutPacked>& add_host,
                                        const ConvStrides& conv_strides,
                                        const ConvDilations& conv_dilations,
                                        const InLeftPads& in_left_pads,
@@ -67,8 +68,28 @@ void host_direct_convolution_add_nchwc(const Tensor<TIn>& in,
 
                         for(int c1 = 0; c1 < wei.mDesc.GetLengths()[4]; ++c1)
                         {
-                            v += static_cast<const double>(in(n, c0, hi, wi, c1)) *
-                                 static_cast<const double>(wei(k, c0, y, x, c1));
+                            if(is_same<TIn, int4x2_t>::value)
+                            {
+                                int8x2_t ax2 = type_convert<int8x2_t>(in(n, c0, hi, wi, c1));
+                                int8x2_t bx2 = type_convert<int8x2_t>(wei(k, c0, y, x, c1));
+
+                                int8_t a0 = vector_type<int8_t, 2>{ax2}.AsType<int8_t>()[I0];
+                                int8_t a1 = vector_type<int8_t, 2>{ax2}.AsType<int8_t>()[I1];
+
+                                int8_t b0 = vector_type<int8_t, 2>{bx2}.AsType<int8_t>()[I0];
+                                int8_t b1 = vector_type<int8_t, 2>{bx2}.AsType<int8_t>()[I1];
+
+                                // std::cout << "a{" << a0 << "," << a1 << "} b{" << b0 << "," << b1
+                                //<< "}" << std::endl;
+
+                                v += a0 * b0;
+                                v += a1 * b1;
+                            }
+                            else
+                            {
+                                v += type_convert<float>(in(n, c0, hi, wi, c1)) *
+                                     type_convert<float>(wei(k, c0, y, x, c1));
+                            }
                         }
                     }
                 }
@@ -78,15 +99,7 @@ void host_direct_convolution_add_nchwc(const Tensor<TIn>& in,
         v += bias(k0, k1);
         // auto vv = c_elementwise_op(v);
         const auto c_elementwise_op_ = CElementwiseOp{scale(k0, k1)};
-        auto vv                      = c_elementwise_op_(v);
-
-        const int hox2 = ho * 2;
-        const int wox2 = wo * 2;
-
-        add_host(n, k0, hox2, wox2, k1)         = vv;
-        add_host(n, k0, hox2, wox2 + 1, k1)     = vv;
-        add_host(n, k0, hox2 + 1, wox2, k1)     = vv;
-        add_host(n, k0, hox2 + 1, wox2 + 1, k1) = vv;
+        out_host(n, k0, ho, wo, k1)  = c_elementwise_op_(v);
     };
 
     make_ParallelTensorFunctor(f_nchw,
@@ -95,6 +108,26 @@ void host_direct_convolution_add_nchwc(const Tensor<TIn>& in,
                                out_host.mDesc.GetLengths()[2],
                                out_host.mDesc.GetLengths()[3],
                                out_host.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
+
+    auto f_pack = [&](auto n, auto k0, auto ho, auto wo) {
+        for(int k1 = 0; k1 < add_host.mDesc.GetLengths()[4]; ++k1)
+        {
+            int8_t low  = out_host(n, k0, ho / 2, wo / 2, k1 * 2);
+            int8_t high = out_host(n, k0, ho / 2, wo / 2, k1 * 2 + 1);
+
+            ck::int8x2_t tmp{low, high};
+
+            ck::int4x2_t v = ck::type_convert<ck::int4x2_t>(tmp);
+
+            add_host(n, k0, ho, wo, k1) = v;
+        }
+    };
+
+    make_ParallelTensorFunctor(f_pack,
+                               add_host.mDesc.GetLengths()[0],
+                               add_host.mDesc.GetLengths()[1],
+                               add_host.mDesc.GetLengths()[2],
+                               add_host.mDesc.GetLengths()[3])(std::thread::hardware_concurrency());
 }
 
 int main(int argc, char* argv[])
@@ -236,11 +269,12 @@ int main(int argc, char* argv[])
     using acc_data_t    = float;
     using out_data_t    = half_t;
 #elif 1
-    using in_data_t    = int4x2_t;
-    using acc_data_t   = int32_t;
-    using bias_data_t  = int32_t;
-    using scale_data_t = float;
-    using out_data_t   = int8_t;
+    using in_data_t         = int4x2_t;
+    using acc_data_t        = int32_t;
+    using bias_data_t       = int32_t;
+    using scale_data_t      = float;
+    using out_data_t        = int8_t;
+    using out_packed_data_t = int4x2_t;
 #endif
 
     std::vector<std::size_t> in_lengths_host(5), wei_lengths_host(5), out_lengths_host(5),
@@ -268,23 +302,25 @@ int main(int argc, char* argv[])
     add_lengths_host[1] = static_cast<std::size_t>(K0);
     add_lengths_host[2] = static_cast<std::size_t>(Hox2);
     add_lengths_host[3] = static_cast<std::size_t>(Wox2);
-    add_lengths_host[4] = static_cast<std::size_t>(K1);
+    add_lengths_host[4] = static_cast<std::size_t>(K1 / 2);
 
     bias_lengths_host[0] = static_cast<std::size_t>(K0);
     bias_lengths_host[1] = static_cast<std::size_t>(K1);
 
     Tensor<in_data_t> in(in_lengths_host);
     Tensor<in_data_t> wei(wei_lengths_host);
-    Tensor<out_data_t> add(add_lengths_host);
-    Tensor<out_data_t> add_device(add_lengths_host);
-    Tensor<out_data_t> add_host(add_lengths_host);
+    // Tensor<out_data_t> add(add_lengths_host);
     Tensor<bias_data_t> bias(bias_lengths_host);
     Tensor<scale_data_t> scale(bias_lengths_host);
     Tensor<out_data_t> out_host(out_lengths_host);
 
+    Tensor<out_packed_data_t> add_device(add_lengths_host);
+    Tensor<out_packed_data_t> add_host(add_lengths_host);
+
     ostream_HostTensorDescriptor(in.mDesc, std::cout << "in: ");
     ostream_HostTensorDescriptor(wei.mDesc, std::cout << "wei: ");
-    ostream_HostTensorDescriptor(add.mDesc, std::cout << "add: ");
+    ostream_HostTensorDescriptor(out_host.mDesc, std::cout << "out: ");
+    ostream_HostTensorDescriptor(add_host.mDesc, std::cout << "add: ");
 
     print_array("InLeftPads", make_tuple(in_left_pad_h, in_left_pad_w));
     print_array("InRightPads", make_tuple(in_right_pad_h, in_right_pad_w));
@@ -304,15 +340,15 @@ int main(int argc, char* argv[])
         break;
     case 2:
         in.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
         break;
     case 3:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         break;
     case 4:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
-        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
+        wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{0, 5}, num_thread);
         break;
     // case 5:
     // in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
@@ -327,53 +363,39 @@ int main(int argc, char* argv[])
         wei.GenerateTensorValue(gen_wei, num_thread);
     }
 
-    bias.GenerateTensorValue(GeneratorTensor_2<bias_data_t>{-5, 5}, num_thread);
+    bias.GenerateTensorValue(GeneratorTensor_2<bias_data_t>{0, 5}, num_thread);
     scale.GenerateTensorValue(GeneratorTensor_3<scale_data_t>{0.1, 0.8}, num_thread);
 
-    auto f_make_for_device_nchwc = [&]() {
-        const auto in_lengths_dev     = make_tuple(N, C0, Hi, Wi, C1);
-        const auto wei_lengths_dev    = make_tuple(K0 * K1, C0, Y, X, C1);
-        const auto add_lengths_dev    = make_tuple(N, K0, Hox2, Wox2, K1);
-        const auto out_lengths_dev    = make_tuple(N, K0, Ho, Wo, K1);
-        const auto conv_strides_dev   = make_tuple(conv_stride_h, conv_stride_w);
-        const auto conv_dilations_dev = make_tuple(conv_dilation_h, conv_dilation_w);
-        const auto in_left_pads_dev   = make_tuple(in_left_pad_h, in_left_pad_w);
-        const auto in_right_pads_dev  = make_tuple(in_right_pad_h, in_right_pad_w);
-
-        return make_tuple(in_lengths_dev,
-                          wei_lengths_dev,
-                          add_lengths_dev,
-                          out_lengths_dev,
-                          conv_strides_dev,
-                          conv_dilations_dev,
-                          in_left_pads_dev,
-                          in_right_pads_dev);
-    };
+    const auto in_lengths_dev     = make_tuple(N, C0, Hi, Wi, C1);
+    const auto wei_lengths_dev    = make_tuple(K0 * K1, C0, Y, X, C1);
+    const auto add_lengths_dev    = make_tuple(N, K0, Hox2, Wox2, K1 / 2);
+    const auto out_lengths_dev    = make_tuple(N, K0, Ho, Wo, K1);
+    const auto conv_strides_dev   = make_tuple(conv_stride_h, conv_stride_w);
+    const auto conv_dilations_dev = make_tuple(conv_dilation_h, conv_dilation_w);
+    const auto in_left_pads_dev   = make_tuple(in_left_pad_h, in_left_pad_w);
+    const auto in_right_pads_dev  = make_tuple(in_right_pad_h, in_right_pad_w);
 
 #if USE_CONV_FWD_V5R1_NCHWC
     if(algo == ConvForwardAlgo::V5R1NCHWC)
     {
-        const auto tmp = f_make_for_device_nchwc();
-
         device_convolution_add_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0yxc1_nk0hwk1<
             in_data_t,
             acc_data_t,
             bias_data_t,
             scale_data_t,
-            out_data_t,
-            activ_type>(tmp[I0], // in_lengths_dev
-                        tmp[I1], // wei_lengths_dev
-                        tmp[I2], // add_lengths_dev
-                        tmp[I3], // out_lengths_dev
-                        tmp[I4], // conv_strides_dev
-                        tmp[I5], // conv_dilations_dev
-                        tmp[I6], // in_left_pads_dev
-                        tmp[I7], // in_right_pads_dev
+            out_packed_data_t,
+            activ_type>(in_lengths_dev,
+                        wei_lengths_dev,
+                        add_lengths_dev,
+                        out_lengths_dev,
+                        conv_strides_dev,
+                        conv_dilations_dev,
+                        in_left_pads_dev,
+                        in_right_pads_dev,
                         in,
                         wei,
                         bias,
                         scale,
-                        add,
                         add_device,
                         nrepeat);
     }

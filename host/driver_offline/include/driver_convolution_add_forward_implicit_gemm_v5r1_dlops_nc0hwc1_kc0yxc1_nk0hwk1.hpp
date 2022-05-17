@@ -75,6 +75,8 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
         const auto Wo = out_n_k0_ho_wo_k1_global_desc.GetLength(I3);
         const auto K1 = out_n_k0_ho_wo_k1_global_desc.GetLength(I4);
 
+        const auto K1Packed = Number<K1 / I2>{};
+
         const auto Hox2 = add_n_k0_hox2_wox2_k1_global_desc.GetLength(I2);
         const auto Wox2 = add_n_k0_hox2_wox2_k1_global_desc.GetLength(I3);
 
@@ -196,8 +198,8 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
 
         // add tensor
         const auto d_k_n_hopx2_wopx2_grid_desc = transform_tensor_descriptor(
-            make_naive_tensor_descriptor_packed(make_tuple(N, K0, Hox2, Wox2, K1)),
-            make_tuple(make_merge_transform(make_tuple(K0, K1)),
+            make_naive_tensor_descriptor_packed(make_tuple(N, K0, Hox2, Wox2, K1Packed)),
+            make_tuple(make_merge_transform(make_tuple(K0, K1Packed)),
                        make_pass_through_transform(N),
                        make_pad_transform(Hox2, I0, OutRightPadHx),
                        make_pad_transform(Wox2, I0, OutRightPadWx)),
