@@ -261,40 +261,11 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
         float ave_time = 0;
 
 #if CK_EXPERIMENTAL_PASS_TENSOR_DESCRIPTOR_BY_VALUE
-        if(group_count > 1)
-        {
-
-            const auto kernel = kernel_batched_gemm_dlops_v3<
-                GridwiseGemm,
-                FloatAB,
-                FloatC,
-                remove_reference_t<AGridDesc_E0_E1_K0_K1_E2>,
-                remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,
-                remove_reference_t<CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2>,
-                remove_reference_t<CBlockIdToBlockClusterAdaptor_K_N_H_W>,
-                true>;
-
-            const index_t all_group_grid_size = grid_size * group_count;
-
-            ave_time = launch_and_time_kernel(kernel,
-                                              nrepeat,
-                                              dim3(all_group_grid_size),
-                                              dim3(BlockSize),
-                                              0,
-                                              p_a_grid,
-                                              p_b_grid,
-                                              p_c_grid,
-                                              a_e0_e1_k0_k1_e2_grid_desc,
-                                              b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc,
-                                              c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
-                                              c_blockid_to_k_n_h_w_block_cluster_adaptor,
-                                              grid_size);
-        }
-        else
         {
             const auto kernel =
                 kernel_gemm_dlops_v3<GridwiseGemm,
                                      FloatAB,
+                                     FloatAcc,
                                      FloatC,
                                      remove_reference_t<AGridDesc_E0_E1_K0_K1_E2>,
                                      remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,

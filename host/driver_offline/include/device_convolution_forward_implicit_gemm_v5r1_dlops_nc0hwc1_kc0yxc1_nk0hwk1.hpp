@@ -64,6 +64,31 @@ void device_convolution_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0yxc1_nk0hwk1
 #if 1
     constexpr index_t BlockSize = 256;
 
+    constexpr index_t E1 = 3 * 3 * 4;
+    constexpr index_t E2 = 8;
+    constexpr index_t K2 = 4;
+
+    constexpr index_t E0PerBlock = 2;
+    constexpr index_t KPerBlock  = 16;
+    constexpr index_t HoPerBlock = 16;
+    constexpr index_t WoPerBlock = 64;
+    constexpr index_t E1PerBlock = 1;
+
+    constexpr index_t KPerThread  = 16;
+    constexpr index_t HoPerThread = 2;
+    constexpr index_t WoPerThread = 2;
+    constexpr index_t EPerThread  = 1;
+
+    using ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2   = Sequence<1, 9, 1, 1, E2>;
+    using ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2 = Sequence<1, 4, 1, KPerBlock, 1>;
+
+    constexpr index_t ABlockTransferSrcScalarPerVector_E2  = E2;
+    constexpr index_t ABlockTransferDstScalarPerVector_E2  = E2;
+    constexpr index_t BThreadTransferSrcScalarPerVector_E2 = E2;
+    constexpr index_t CThreadTransferDstScalarPerVector_K  = E2;
+#elif 1
+    constexpr index_t BlockSize = 256;
+
     constexpr index_t E1 = C0 * Y * X;
     constexpr index_t E2 = C1;
     constexpr index_t K2 = 4;
