@@ -1437,6 +1437,9 @@ struct ThreadwiseTensorSliceTransfer_v4
             src_tmp_vector.template AsType<src_vector_t>()(Number<0>{}) =
                 src_buf.template Get<src_vector_t>(src_data_coord.GetOffset(), is_src_valid);
 
+            if(get_thread_local_1d_id() == 0 && get_block_1d_id() == 0)
+                printf("ThreadwiseTensorSliceTransfer_v4: %d\n", src_data_coord.GetOffset());
+
             // copy data from src_tmp_vector to dst_tmp_vector (data cast data from SrcData to
             // DstData)
             vector_type_maker_t<DstData, SrcScalarPerVector> dst_tmp_vector;

@@ -205,6 +205,9 @@ struct ThreadwiseTensorSliceTransfer_v3r1
             auto src_vector_container = src_vector_type{
                 src_buf.template Get<src_vector_t>(src_coord_.GetOffset(), is_src_valid)};
 
+            if(get_thread_local_1d_id() == 0 && get_block_1d_id() == 0)
+                printf("ThreadwiseTensorSliceTransfer_v3r1: %d\n", src_coord_.GetOffset());
+
             // apply SrcElementwiseOperation on src_vector_container
             static_for<0, SrcScalarPerVector, 1>{}([&](auto i) {
                 src_vector_container.template AsType<SrcData>()(i) =
