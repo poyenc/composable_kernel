@@ -903,7 +903,7 @@ struct GridwiseGemmDlops_km_kn_mn_v3
     MakeCBlockIdToKNHoWoBlockClusterAdaptor(const CGridDesc_K_N_Ho_Wo& c_k_n_ho_wo_grid_desc)
     {
 
-#if 0
+#if CK_EXPERIMENTAL_STATIC_TENSOR_DESCRIPTOR
         constexpr index_t K  = CGridDesc_K_N_Ho_Wo{}.GetLength(I0);
         constexpr index_t N  = CGridDesc_K_N_Ho_Wo{}.GetLength(I1);
         constexpr index_t Ho = CGridDesc_K_N_Ho_Wo{}.GetLength(I2);
@@ -1445,8 +1445,8 @@ struct GridwiseGemmDlops_km_kn_mn_v3
                                               ABlockTransferDstScalarPerVector_E2,
                                               1,
                                               1,
-                                              AThreadTransferSrcResetCoordinateAfterRun,
-                                              false>(
+                                              false,
+                                              true>(
                 a_e0_e1_k0_k1_e2_grid_desc,
                 make_multi_index(0, 0, k_block_work_id, 0, 0),
                 ck::tensor_operation::element_wise::PassThrough{},
@@ -1516,19 +1516,23 @@ struct GridwiseGemmDlops_km_kn_mn_v3
 
         index_t e0_block_data_begin = 0;
 
+        // LDS double buffer: preload data
+        {
+            a_blockwise_copy.RunRead(a_e0_e1_k0_k1_e2_grid_desc, a_global_buf);
+            a_blockwise_copy.RunWrite(a_e0_e1_k0_k1_e2_block_copy_desc, a_block_buf);
+        }
+
         do
         {
-            __syncthreads();
 
-            // LDS double buffer: preload data
-            {
-                a_blockwise_copy.RunRead(a_e0_e1_k0_k1_e2_grid_desc, a_global_buf);
-                a_blockwise_copy.RunWrite(a_e0_e1_k0_k1_e2_block_copy_desc, a_block_buf);
-            }
+            a_blockwise_copy.MoveSrcSliceWindow(a_e0_e1_k0_k1_e2_grid_desc,
+                                                make_multi_index(E0PerBlock, 0, 0, 0, 0));
 
-            __syncthreads();
+            a_blockwise_copy.RunRead(a_e0_e1_k0_k1_e2_grid_desc, a_global_buf);
 
             index_t gemm_e_offset = 0;
+
+            block_sync_lds();
 
             static_for<0, E0PerBlock, 1>{}([&](auto) {
                 b_threadwise_transfer.Run(b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc,
@@ -1622,13 +1626,11 @@ struct GridwiseGemmDlops_km_kn_mn_v3
                 }
             });
 
+            block_sync_lds();
+
+            a_blockwise_copy.RunWrite(a_e0_e1_k0_k1_e2_block_copy_desc, a_block_buf);
+
             blockwise_gemm.MoveABlockSliceWindow(make_tuple(-gemm_e_offset, 0, 0));
-
-            a_blockwise_copy.MoveSrcSliceWindow(a_e0_e1_k0_k1_e2_grid_desc,
-                                                make_multi_index(E0PerBlock, 0, 0, 0, 0));
-
-            // printf(
-            //"e0_block_data_begin: %d gemm_e_offset: %d\n", e0_block_data_begin, gemm_e_offset);
 
             e0_block_data_begin += E0PerBlock;
 

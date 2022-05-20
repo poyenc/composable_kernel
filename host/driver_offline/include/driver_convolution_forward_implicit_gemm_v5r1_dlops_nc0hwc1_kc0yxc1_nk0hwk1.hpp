@@ -107,6 +107,8 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
 
         const auto E0 = (C0 * Y * X) / E1;
 
+        std::cout << "E0 = " << E0 << " E1 = " << E1 << " E2 = " << E2 << std::endl;
+
         // weight tensor
         const auto a_e_k_e2_grid_desc = transform_tensor_descriptor(
             make_naive_tensor_descriptor_packed(make_tuple(K, C0 * Y * X, E2)),
