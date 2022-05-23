@@ -100,7 +100,7 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
         constexpr auto E2 = Number<E2_>{};
         constexpr auto K2 = Number<K2_>{};
 
-        if((C0 * Y * X) % (E1 * E0PerBlock) != 0)
+        if((C0 * Y * X) % E1 != 0)
         {
             throw std::runtime_error("wrong! GEMM size no divisible");
         }
