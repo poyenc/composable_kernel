@@ -49,7 +49,6 @@ void device_convolution_depth2space_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0
     const auto Wo = out_n_k0_ho_wo_k1_lengths[I3];
     const auto K1 = out_n_k0_ho_wo_k1_lengths[I4];
 
-
     const auto C0 = in_n_c0_hi_wi_c1_lengths[I1];
     const auto Hi = in_n_c0_hi_wi_c1_lengths[I2];
     const auto Wi = in_n_c0_hi_wi_c1_lengths[I3];
@@ -59,8 +58,8 @@ void device_convolution_depth2space_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0
     const auto Y = wei_k_c0_y_x_c1_lengths[I2];
     const auto X = wei_k_c0_y_x_c1_lengths[I3];
 
-    const auto Hx = dp2sp_n_k0_hx_wx_k1_lengths[I2];
-    const auto Wx = dp2sp_n_k0_hx_wx_k1_lengths[I3];
+    const auto Hx  = dp2sp_n_k0_hx_wx_k1_lengths[I2];
+    const auto Wx  = dp2sp_n_k0_hx_wx_k1_lengths[I3];
     const auto K1x = dp2sp_n_k0_hx_wx_k1_lengths[I4];
 
     DeviceMem in_n_c0_hi_wi_c1_device_buf(sizeof(TInWei) *
@@ -70,7 +69,7 @@ void device_convolution_depth2space_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0
     DeviceMem out_n_k0_ho_wo_k1_device_buf(sizeof(TOut) *
                                            out_n_k0_ho_wo_k1.mDesc.GetElementSpace());
     DeviceMem dp2sp_n_k0_hx_wx_k1_device_buf(sizeof(TOut) *
-                                           dp2sp_n_k0_hx_wx_k1.mDesc.GetElementSpace());
+                                             dp2sp_n_k0_hx_wx_k1.mDesc.GetElementSpace());
 
     in_n_c0_hi_wi_c1_device_buf.ToDevice(in_n_c0_hi_wi_c1.mData.data());
     wei_k_c0_y_x_c1_device_buf.ToDevice(wei_k_c0_y_x_c1.mData.data());
@@ -110,7 +109,7 @@ void device_convolution_depth2space_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0
     constexpr index_t ABlockTransferSrcScalarPerVector_E2  = C1;
     constexpr index_t ABlockTransferDstScalarPerVector_E2  = C1;
     constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
-    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
+    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1x;
 #elif 0
     constexpr index_t BlockSize = 256;
 
@@ -185,7 +184,7 @@ void device_convolution_depth2space_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0
     constexpr index_t ABlockTransferSrcScalarPerVector_E2  = C1;
     constexpr index_t ABlockTransferDstScalarPerVector_E2  = C1;
     constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
-    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
+    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1x;
 #endif
 
     if(KPerThread % InWeiVectorSize != 0)
@@ -232,8 +231,8 @@ void device_convolution_depth2space_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0
     std::cerr << "input_"
               << "n" << N << "c" << C0 << "h" << Hi << "w" << Wi << "c" << C1 << "_filter_k" << K
               << "c" << C0 << "y" << Y << "x" << X << "c" << C1 << "_convout_n" << N << "k" << K0
-              << "h" << Ho << "w" << Wo << "k" << K1 << "_depth2space_out_n" << N << "k" << K0 << "h"
-              << Hx << "w" << Wx << "k" << K1x << std::endl;
+              << "h" << Ho << "w" << Wo << "k" << K1 << "_depth2space_out_n" << N << "k" << K0
+              << "h" << Hx << "w" << Wx << "k" << K1x << std::endl;
 
     std::cerr << "BlockSize_" << BlockSize << "_E1_" << E1 << "_E2_" << E2 << "_K2_" << K2
               << "_KPerBlock_" << KPerBlock << "_HoPerBlock_" << HoPerBlock << "_WoPerBlock_"

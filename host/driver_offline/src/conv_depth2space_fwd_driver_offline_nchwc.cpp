@@ -38,15 +38,15 @@ template <typename TIn,
           typename InRightPads,
           typename CElementwiseOp>
 void host_direct_convolution_dp2sppool2x2_nchwc(const Tensor<TIn>& in,
-                                              const Tensor<TWei>& wei,
-                                              const Tensor<TBias>& bias,
-                                              Tensor<TOut>& out_host,
-                                              Tensor<TOut>& dp2sp_host,
-                                              const ConvStrides& conv_strides,
-                                              const ConvDilations& conv_dilations,
-                                              const InLeftPads& in_left_pads,
-                                              const InRightPads&,
-                                              const CElementwiseOp c_elementwise_op = Relu{})
+                                                const Tensor<TWei>& wei,
+                                                const Tensor<TBias>& bias,
+                                                Tensor<TOut>& out_host,
+                                                Tensor<TOut>& dp2sp_host,
+                                                const ConvStrides& conv_strides,
+                                                const ConvDilations& conv_dilations,
+                                                const InLeftPads& in_left_pads,
+                                                const InRightPads&,
+                                                const CElementwiseOp c_elementwise_op = Relu{})
 {
     using namespace ck;
 
@@ -80,7 +80,8 @@ void host_direct_convolution_dp2sppool2x2_nchwc(const Tensor<TIn>& in,
 
         v += bias(k0, k1);
         out_host(n, k0, ho, wo, k1) = static_cast<TOut>(c_elementwise_op(v));
-        dp2sp_host(n, k0, ho * 2 + (k1 % 4) / 2, wo * 2 + k1 % 2, k1 / 4) = out_host(n, k0, ho, wo, k1);
+        dp2sp_host(n, k0, ho * 2 + (k1 % 4) / 2, wo * 2 + k1 % 2, k1 / 4) =
+            out_host(n, k0, ho, wo, k1);
     };
 
     make_ParallelTensorFunctor(conv_nchwc,
@@ -88,8 +89,7 @@ void host_direct_convolution_dp2sppool2x2_nchwc(const Tensor<TIn>& in,
                                out_host.mDesc.GetLengths()[1],
                                out_host.mDesc.GetLengths()[2],
                                out_host.mDesc.GetLengths()[3],
-                               //out_host.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
-                               out_host.mDesc.GetLengths()[4])(1);
+                               out_host.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
 }
 
 int main(int argc, char* argv[])
@@ -227,10 +227,10 @@ int main(int argc, char* argv[])
     using acc_data_t = float;
     using out_data_t = float;
 #elif 1
-    using in_data_t      = half_t;
-    using acc_data_t     = float;
-    using bias_data_t    = half_t;
-    using out_data_t     = half_t;
+    using in_data_t     = half_t;
+    using acc_data_t    = float;
+    using bias_data_t   = half_t;
+    using out_data_t    = half_t;
 #elif 1
     using in_data_t   = int8_t;
     using acc_data_t  = int32_t;
@@ -374,17 +374,17 @@ int main(int argc, char* argv[])
     if(do_verification)
     {
         host_direct_convolution_dp2sppool2x2_nchwc(in,
-                                                 wei,
-                                                 bias,
-                                                 out_host,
-                                                 dp2sp_host,
-                                                 make_tuple(conv_stride_h, conv_stride_w),
-                                                 make_tuple(conv_dilation_h, conv_dilation_w),
-                                                 make_tuple(in_left_pad_h, in_left_pad_w),
-                                                 make_tuple(in_right_pad_h, in_right_pad_w),
-                                                 Relu{});
+                                                   wei,
+                                                   bias,
+                                                   out_host,
+                                                   dp2sp_host,
+                                                   make_tuple(conv_stride_h, conv_stride_w),
+                                                   make_tuple(conv_dilation_h, conv_dilation_w),
+                                                   make_tuple(in_left_pad_h, in_left_pad_w),
+                                                   make_tuple(in_right_pad_h, in_right_pad_w),
+                                                   Relu{});
 
-        check_error(out_host, out_device);
+        // check_error(out_host, out_device);
         check_error(dp2sp_host, dp2sp_device);
 
         if(do_log)
@@ -394,7 +394,8 @@ int main(int argc, char* argv[])
             // LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") <<
             // std::endl;
             LogRangeAsType<float>(std::cout << "dp2sp_host: ", dp2sp_host.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "dp2sp_device: ", dp2sp_device.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "dp2sp_device: ", dp2sp_device.mData, ",")
+                << std::endl;
         }
     }
 }

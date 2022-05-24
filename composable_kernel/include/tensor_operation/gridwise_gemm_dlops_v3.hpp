@@ -378,15 +378,15 @@ __global__ void
         // ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm, scaleRelu}
     );
 
-    auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
-        p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+    // auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+    // p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
 
     // Output
-    GridwiseGemm::WriteOut(d_thread_buf,
-                           c_global_buf,
-                           c_k_n_h_w_block_cluster_idx,
-                           c_thread_mtx_index,
-                           c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
+    // GridwiseGemm::WriteOut(d_thread_buf,
+    // c_global_buf,
+    // c_k_n_h_w_block_cluster_idx,
+    // c_thread_mtx_index,
+    // c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
 
     auto d_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_d_grid, d_k0_k1x_n_h0_h1_hx_w0_w1_wx_grid_desc.GetElementSpaceSize());
@@ -1417,20 +1417,20 @@ struct GridwiseGemmDlops_km_kn_mn_v3
             Sequence<I1, KPerThread / 4, I1, I1, I1, HoPerThread_2, I1, I1, WoPerThread_2>,
             CThreadTransferSrcDstAccessOrder,
             CThreadTransferSrcDstVectorDim,
-            KPerThread / 4,
+            CThreadTransferDstScalarPerVector,
             InMemoryDataOperationEnum_t::Set,
             1,
-            true>(d_k0_k1x_n_h0_h1_hx_w0_w1_wx_grid_desc,
-                  make_multi_index(k_block_work_id,
-                                   k_thread_data_on_global,
-                                   n_block_work_id,
-                                   ho_block_work_id,
-                                   ho_thread_id,
-                                   0,
-                                   wo_block_work_id,
-                                   wo_thread_id,
-                                   0),
-                  ck::tensor_operation::element_wise::PassThrough{})
+            false>(d_k0_k1x_n_h0_h1_hx_w0_w1_wx_grid_desc,
+                   make_multi_index(k_block_work_id,
+                                    k_thread_data_on_global,
+                                    n_block_work_id,
+                                    ho_block_work_id,
+                                    ho_thread_id,
+                                    0,
+                                    wo_block_work_id,
+                                    wo_thread_id,
+                                    0),
+                   ck::tensor_operation::element_wise::PassThrough{})
             .Run(d_k0_k1x_n_h0_h1_hx_w0_w1_wx_thread_desc,
                  make_tuple(I0, I0, I0, I0, I0, I0, I0, I0, I0),
                  d_thread_buf,
