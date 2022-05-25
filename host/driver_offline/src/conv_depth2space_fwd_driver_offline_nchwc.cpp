@@ -80,7 +80,13 @@ void host_direct_convolution_dp2sppool2x2_nchwc(const Tensor<TIn>& in,
 
         v += bias(k0, k1);
         out_host(n, k0, ho, wo, k1) = static_cast<TOut>(c_elementwise_op(v));
-        dp2sp_host(n, k0, ho * 2 + (k1 % 4) / 2, wo * 2 + k1 % 2, k1 / 4) =
+
+        auto k_new = k / 4;
+        auto k_mod = k % 4;
+        auto k1_d = k_new % dp2sp_host.mDesc.GetLengths()[4];
+        auto k0_d = k_new / dp2sp_host.mDesc.GetLengths()[4];
+
+        dp2sp_host(n, k0_d, ho * 2 + k_mod / 2, wo * 2 + k_mod % 2, k1_d) =
             out_host(n, k0, ho, wo, k1);
     };
 
