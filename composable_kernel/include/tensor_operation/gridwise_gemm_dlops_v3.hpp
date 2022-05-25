@@ -185,8 +185,7 @@ __global__ void
                                         const FloatAB* __restrict__ p_b_grid,
                                         const FloatBias* __restrict__ p_bias_grid,
                                         FloatC* __restrict__ p_d_grid,
-                                        float scaleGemm,
-                                        float scaleRelu)
+                                        float scaleGemm)
 {
     constexpr index_t shared_block_size =
         GridwiseGemm::GetSharedMemoryNumberOfByte() / sizeof(FloatAB);
@@ -258,12 +257,11 @@ __global__ void
         d_thread_buf;
 
     // Activ
-    GridwiseGemm::ActivationV2(
-        c_thread_buf,
-        d_thread_buf,
-        c_k1_n_h2_w2_thread_gemm_desc,
-        // ck::tensor_operation::element_wise::PassThrough{},
-        ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm, scaleRelu});
+    GridwiseGemm::ActivationV2(c_thread_buf,
+                               d_thread_buf,
+                               c_k1_n_h2_w2_thread_gemm_desc,
+                               // ck::tensor_operation::element_wise::PassThrough{},
+                               ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm});
 
     auto d_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_d_grid, d_k0_k1_n_h0_h1_hx_w0_w1_wx_grid_desc.GetElementSpaceSize());
@@ -298,8 +296,7 @@ __global__ void
                                      const FloatBias* __restrict__ p_bias_grid,
                                      FloatC* __restrict__ p_c_grid,
                                      FloatC* __restrict__ p_d_grid,
-                                     float scaleGemm,
-                                     float scaleRelu)
+                                     float scaleGemm)
 {
     constexpr index_t shared_block_size =
         GridwiseGemm::GetSharedMemoryNumberOfByte() / sizeof(FloatAB);
@@ -370,12 +367,11 @@ __global__ void
         d_thread_buf;
 
     // Activ
-    GridwiseGemm::ActivationV2(
-        c_thread_buf,
-        d_thread_buf,
-        c_k1_n_h2_w2_thread_gemm_desc,
-        // ck::tensor_operation::element_wise::Relu{}
-        ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm, scaleRelu});
+    GridwiseGemm::ActivationV2(c_thread_buf,
+                               d_thread_buf,
+                               c_k1_n_h2_w2_thread_gemm_desc,
+                               // ck::tensor_operation::element_wise::Relu{}
+                               ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm});
 
     auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
@@ -418,8 +414,7 @@ __global__ void
                                         const FloatAB* __restrict__ p_b_grid,
                                         const FloatBias* __restrict__ p_bias_grid,
                                         FloatC* __restrict__ p_c_grid,
-                                        float scaleGemm,
-                                        float scaleRelu)
+                                        float scaleGemm)
 {
     constexpr index_t shared_block_size =
         GridwiseGemm::GetSharedMemoryNumberOfByte() / sizeof(FloatAB);
@@ -485,14 +480,13 @@ __global__ void
     auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
 
-    GridwiseGemm::WriteOut(
-        c_thread_buf,
-        c_global_buf,
-        c_k_n_h_w_block_cluster_idx,
-        c_thread_mtx_index,
-        c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
-        ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm, scaleRelu}
-        // ck::tensor_operation::element_wise::PassThrough{}
+    GridwiseGemm::WriteOut(c_thread_buf,
+                           c_global_buf,
+                           c_k_n_h_w_block_cluster_idx,
+                           c_thread_mtx_index,
+                           c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
+                           ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm}
+                           // ck::tensor_operation::element_wise::PassThrough{}
     );
 }
 
