@@ -243,7 +243,7 @@ int main(int argc, char* argv[])
     using in_data_t  = float;
     using acc_data_t = float;
     using out_data_t = float;
-#elif 1
+#elif 0
     using in_data_t      = half_t;
     using acc_data_t     = float;
     using bias_data_t    = half_t;
@@ -398,7 +398,8 @@ int main(int argc, char* argv[])
             make_tuple(conv_dilation_h, conv_dilation_w),
             make_tuple(in_left_pad_h, in_left_pad_w),
             make_tuple(in_right_pad_h, in_right_pad_w),
-            ck::tensor_operation::element_wise::RequantReluRequant{0.3});
+            //ck::tensor_operation::element_wise::RequantReluRequant{0.3});
+            ck::tensor_operation::element_wise::RequantHardTanh{0.3});
 
         check_error(out_host, out_device);
         check_error(max_host, max_device);

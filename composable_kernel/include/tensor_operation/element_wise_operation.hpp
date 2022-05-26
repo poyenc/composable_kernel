@@ -108,6 +108,33 @@ struct Relu
     }
 };
 
+struct RequantHardTanh
+{
+    // FIXME: We just need one scale for Relu / Leaky Relu / PRelu
+    __host__ __device__ RequantHardTanh(float scaleGemm) : scaleGemm_(scaleGemm) {}
+
+    __host__ __device__ constexpr int8_t operator()(const int32_t& x) const
+    {
+        float gemm_requant = scaleGemm_ * static_cast<float>(x);
+        float tanh_requant = gemm_requant > 1 ? 1 : (gemm_requant < -1 ? -1 : gemm_requant);
+        int8_t y           = static_cast<int8_t>(
+            tanh_requant > 127 ? 127 : tanh_requant < -128 ? -128 : tanh_requant);
+        return y;
+    }
+
+    // for reference_gemm
+    __host__ __device__ constexpr float operator()(const float& x) const
+    {
+        float gemm_requant = scaleGemm_ * x;
+        float tanh_requant = gemm_requant > 1 ? 1 : (gemm_requant < -1 ? -1 : gemm_requant);
+        float y            = static_cast<float>(
+            tanh_requant > 127 ? 127 : tanh_requant < -128 ? -128 : tanh_requant);
+        return y;
+    }
+
+    float scaleGemm_;
+};
+
 struct RequantReluRequant
 {
     // FIXME: We just need one scale for Relu / Leaky Relu / PRelu
