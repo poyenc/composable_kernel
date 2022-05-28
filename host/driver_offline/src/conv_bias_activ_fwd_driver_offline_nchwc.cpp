@@ -72,7 +72,8 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
             }
         }
         v += bias(k0, k1);
-        out(n, k0, ho, wo, k1) = c_elementwise_op(v);
+        // out(n, k0, ho, wo, k1) = c_elementwise_op(v);
+        out(n, k0, ho, wo, k1) = v;
     };
 
     make_ParallelTensorFunctor(f_nchw,
@@ -81,6 +82,40 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                out.mDesc.GetLengths()[2],
                                out.mDesc.GetLengths()[3],
                                out.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
+
+    auto f_softmax = [&](auto n, auto ho, auto wo) {
+        float x_max = 0;
+        for(int k0 = 0; k0 < out.mDesc.GetLengths()[1]; ++k0)
+        {
+            for(int k1 = 0; k1 < out.mDesc.GetLengths()[4]; ++k1)
+            {
+                x_max = max(x_max, out(n, k0, ho, wo, k1));
+            }
+        }
+
+        float x_sum = 0;
+        for(int k0 = 0; k0 < out.mDesc.GetLengths()[1]; ++k0)
+        {
+            for(int k1 = 0; k1 < out.mDesc.GetLengths()[4]; ++k1)
+            {
+                out(n, k0, ho, wo, k1) = exp(out(n, k0, ho, wo, k1) - x_max);
+                x_sum += out(n, k0, ho, wo, k1);
+            }
+        }
+
+        for(int k0 = 0; k0 < out.mDesc.GetLengths()[1]; ++k0)
+        {
+            for(int k1 = 0; k1 < out.mDesc.GetLengths()[4]; ++k1)
+            {
+                out(n, k0, ho, wo, k1) = out(n, k0, ho, wo, k1) / x_sum;
+            }
+        }
+    };
+
+    make_ParallelTensorFunctor(f_softmax,
+                               out.mDesc.GetLengths()[0],
+                               out.mDesc.GetLengths()[2],
+                               out.mDesc.GetLengths()[3])(std::thread::hardware_concurrency());
 }
 
 int main(int argc, char* argv[])
@@ -211,14 +246,15 @@ int main(int argc, char* argv[])
     using in_data_t  = float;
     using acc_data_t = float;
     using out_data_t = float;
-#elif 0
+#elif 1
     using in_data_t   = half_t;
     using acc_data_t  = float;
+    using bias_data_t = half_t;
     using out_data_t  = half_t;
 #elif 1
     using in_data_t   = int8_t;
-    using bias_data_t = int32_t;
     using acc_data_t  = int32_t;
+    using bias_data_t = int32_t;
     using out_data_t  = int8_t;
 #endif
 

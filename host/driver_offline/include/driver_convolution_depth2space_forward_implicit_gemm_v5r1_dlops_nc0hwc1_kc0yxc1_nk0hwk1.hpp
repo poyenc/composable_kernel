@@ -335,8 +335,7 @@ struct DriverDynamicConvolutionForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0
                                               p_bias_grid,
                                               p_c_grid,
                                               p_d_grid,
-                                              0.3,
-                                              1.0);
+                                              0.3);
         }
 #endif
 

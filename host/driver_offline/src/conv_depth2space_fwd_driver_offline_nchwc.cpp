@@ -83,8 +83,8 @@ void host_direct_convolution_dp2sppool2x2_nchwc(const Tensor<TIn>& in,
 
         auto k_new = k / 4;
         auto k_mod = k % 4;
-        auto k1_d = k_new % dp2sp_host.mDesc.GetLengths()[4];
-        auto k0_d = k_new / dp2sp_host.mDesc.GetLengths()[4];
+        auto k1_d  = k_new % dp2sp_host.mDesc.GetLengths()[4];
+        auto k0_d  = k_new / dp2sp_host.mDesc.GetLengths()[4];
 
         dp2sp_host(n, k0_d, ho * 2 + k_mod / 2, wo * 2 + k_mod % 2, k1_d) =
             out_host(n, k0, ho, wo, k1);
@@ -379,16 +379,17 @@ int main(int argc, char* argv[])
 
     if(do_verification)
     {
-        host_direct_convolution_dp2sppool2x2_nchwc(in,
-                                                   wei,
-                                                   bias,
-                                                   out_host,
-                                                   dp2sp_host,
-                                                   make_tuple(conv_stride_h, conv_stride_w),
-                                                   make_tuple(conv_dilation_h, conv_dilation_w),
-                                                   make_tuple(in_left_pad_h, in_left_pad_w),
-                                                   make_tuple(in_right_pad_h, in_right_pad_w),
-                                                   Relu{});
+        host_direct_convolution_dp2sppool2x2_nchwc(
+            in,
+            wei,
+            bias,
+            out_host,
+            dp2sp_host,
+            make_tuple(conv_stride_h, conv_stride_w),
+            make_tuple(conv_dilation_h, conv_dilation_w),
+            make_tuple(in_left_pad_h, in_left_pad_w),
+            make_tuple(in_right_pad_h, in_right_pad_w),
+            ck::tensor_operation::element_wise::RequantHardTanh{0.3});
 
         // check_error(out_host, out_device);
         check_error(dp2sp_host, dp2sp_device);

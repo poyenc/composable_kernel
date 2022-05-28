@@ -195,12 +195,10 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             BlockSize,
             FloatAB,
             FloatAcc,
-            FloatBias,
             FloatC,
             InMemoryDataOperationEnum_t::Set,
             decltype(a_e0_e1_k_e2_grid_desc),
             decltype(b_e0_e1_n_ho_wo_e2_grid_desc),
-            decltype(c_k_n_hop_wop_grid_desc),
             decltype(c_k_n_hop_wop_grid_desc),
             E1,
             E2,
@@ -320,7 +318,7 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             static_assert(c_blockid_to_k_n_h_w_block_cluster_adaptor.IsKnownAtCompileTime(), "");
 
             {
-                const auto kernel = kernel_gemm_bias_activ_dlops_v3<
+                const auto kernel = kernel_gemm_softmax_dlops_v3<
                     GridwiseGemm,
                     FloatAB,
                     FloatAcc,
