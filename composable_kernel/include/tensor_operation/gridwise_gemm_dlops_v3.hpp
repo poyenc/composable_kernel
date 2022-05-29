@@ -697,9 +697,18 @@ __global__ void
     auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
 
-    GridwiseGemm::SoftmaxOp(c_thread_buf, c_k1_n_h2_w2_thread_gemm_desc);
+    constexpr auto d_k1p_n_h2_w2_thread_gemm_desc = GridwiseGemm::MakeCK1pNH2W2ThreadDescriptor();
 
-    GridwiseGemm::WriteOut(c_thread_buf,
+    StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                 FloatC,
+                 d_k1p_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(),
+                 true>
+        d_thread_buf;
+
+    GridwiseGemm::SoftmaxOp(
+        c_thread_buf, d_thread_buf, c_k1_n_h2_w2_thread_gemm_desc, d_k1p_n_h2_w2_thread_gemm_desc);
+
+    GridwiseGemm::WriteOut(d_thread_buf,
                            c_global_buf,
                            c_k_n_h_w_block_cluster_idx,
                            c_thread_mtx_index,
@@ -1206,6 +1215,15 @@ struct GridwiseGemmDlops_km_kn_mn_v3
         return c_k1_n_h2_w2_thread_gemm_desc;
     }
 
+    __host__ __device__ static constexpr auto MakeCK1pNH2W2ThreadDescriptor()
+    {
+        constexpr index_t KPack                      = 2;
+        constexpr index_t KPerThreadPad              = (KPerThread + KPack - 1) / KPack * KPack;
+        constexpr auto c_k1_n_h2_w2_thread_gemm_desc = make_naive_tensor_descriptor_packed(
+            make_tuple(Number<KPerThreadPad>{}, I1, Number<HoPerThread>{}, Number<WoPerThread>{}));
+        return c_k1_n_h2_w2_thread_gemm_desc;
+    }
+
     // using CThreadDesc_K1_N_H2_W2 = decltype(MakeCK1NH2W2ThreadDescriptor());
 
     __host__ __device__ static constexpr auto GetBlockWiseGemm()
@@ -1257,12 +1275,19 @@ struct GridwiseGemmDlops_km_kn_mn_v3
         return c_k_n_h_w_block_cluster_idx;
     }
 
-    template <typename CThreadBuff, typename CThreadDesc_K1_N_H2_W2>
-    __device__ static void SoftmaxOp(CThreadBuff& c_thread_buf, const CThreadDesc_K1_N_H2_W2&)
+    template <typename CThreadBuff,
+              typename DThreadBuff,
+              typename CThreadDesc_K1_N_H2_W2,
+              typename DThreadDesc_K1_N_H2_W2>
+    __device__ static void SoftmaxOp(CThreadBuff& c_thread_buf,
+                                     DThreadBuff& d_thread_buf,
+                                     const CThreadDesc_K1_N_H2_W2&,
+                                     const DThreadDesc_K1_N_H2_W2&)
 
     {
 
         constexpr auto c_k1_n_h2_w2_thread_gemm_desc = CThreadDesc_K1_N_H2_W2{};
+        constexpr auto d_k1_n_h2_w2_thread_gemm_desc = DThreadDesc_K1_N_H2_W2{};
 
         static_for<0, HoPerThread, 1>{}([&](auto hi) {
             static_for<0, WoPerThread, 1>{}([&](auto wi) {
@@ -1286,7 +1311,9 @@ struct GridwiseGemmDlops_km_kn_mn_v3
                 static_for<0, KPerThread, 1>{}([&](auto ki) {
                     auto c_offset          = Number<c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
                         make_tuple(ki, 0, hi, wi))>{};
-                    c_thread_buf(c_offset) = c_thread_buf[c_offset] / sum;
+                    auto d_offset          = Number<d_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
+                        make_tuple(ki, 0, hi, wi))>{};
+                    d_thread_buf(d_offset) = c_thread_buf[c_offset] / sum;
                 });
             });
         });
@@ -1441,8 +1468,10 @@ struct GridwiseGemmDlops_km_kn_mn_v3
 
         const index_t k_thread_data_on_global = k_thread_id * KPerThread;
 
+        using FloatCThread = remove_cvref_t<typename CThreadBuff::type>;
+
         ThreadwiseTensorSliceTransfer_v1r3<
-            FloatAcc,
+            FloatCThread,
             FloatC,
             decltype(c_k0_k1_n_h0_h1_h2_w0_w1_w2_thread_copy_desc),
             decltype(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc),

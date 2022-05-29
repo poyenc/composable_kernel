@@ -43,10 +43,10 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
     __host__ float Run(const ck::TensorDescriptor<Wei...>& wei_k_c0_y_x_c1_global_desc,
                        const ck::TensorDescriptor<In...>& in_n_c0_hi_wi_c1_global_desc,
                        const ck::TensorDescriptor<Out...>& out_n_k0_ho_wo_k1_global_desc,
-                       const ConvStrides& conv_strides,
-                       const ConvDilations& conv_dilations,
-                       const InLeftPads& in_left_pads,
-                       const InRightPads& in_right_pads,
+                       const ConvStrides&,
+                       const ConvDilations&,
+                       const InLeftPads&,
+                       const InRightPads&,
                        const FloatAB* __restrict__ p_a_grid,
                        const FloatAB* __restrict__ p_b_grid,
                        const FloatBias* __restrict__ p_bias_grid,
@@ -76,11 +76,11 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
         const auto Y = wei_k_c0_y_x_c1_global_desc.GetLength(I2);
         const auto X = wei_k_c0_y_x_c1_global_desc.GetLength(I3);
 
-        const auto ConvStrideH = conv_strides[I0];
-        const auto ConvStrideW = conv_strides[I1];
+        // const auto ConvStrideH = conv_strides[I0];
+        // const auto ConvStrideW = conv_strides[I1];
 
-        const auto ConvDilationH = conv_dilations[I0];
-        const auto ConvDilationW = conv_dilations[I1];
+        // const auto ConvDilationH = conv_dilations[I0];
+        // const auto ConvDilationW = conv_dilations[I1];
 
 #if CK_EXPERIMENTAL_STATIC_TENSOR_DESCRIPTOR
         const auto Hop = Number<(Ho + HoPerBlock - 1) / HoPerBlock * HoPerBlock>{};
@@ -93,11 +93,11 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
         const auto OutRightPadH = Hop - Ho;
         const auto OutRightPadW = Wop - Wo;
 
-        const auto InLeftPadH = in_left_pads[I0];
-        const auto InLeftPadW = in_left_pads[I1];
+        // const auto InLeftPadH = in_left_pads[I0];
+        // const auto InLeftPadW = in_left_pads[I1];
 
-        const auto InRightPadH = in_right_pads[I0] + OutRightPadH * ConvStrideH;
-        const auto InRightPadW = in_right_pads[I1] + OutRightPadW * ConvStrideW;
+        const auto InRightPadH = OutRightPadH;
+        const auto InRightPadW = OutRightPadW;
 
         constexpr auto E1 = Number<E1_>{};
         constexpr auto E2 = Number<E2_>{};
@@ -132,33 +132,20 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             make_naive_tensor_descriptor_packed(make_tuple(N, C0, Hi, Wi, E2)),
             make_tuple(make_pass_through_transform(N),
                        make_pass_through_transform(C0),
-                       make_pad_transform(Hi, InLeftPadH, InRightPadH),
-                       make_pad_transform(Wi, InLeftPadW, InRightPadW),
+                       make_right_pad_transform(Hi, InRightPadH),
+                       make_right_pad_transform(Wi, InRightPadW),
                        make_pass_through_transform(E2)),
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}),
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}));
 
-        const auto in_n_c0_y_ho_x_wo_e2_global_desc = transform_tensor_descriptor(
-            in_n_c0_hip_wip_e2_global_desc,
-            make_tuple(
-                make_pass_through_transform(N),
-                make_pass_through_transform(C0),
-                make_embed_transform(make_tuple(Y, Hop), make_tuple(ConvDilationH, ConvStrideH)),
-                make_embed_transform(make_tuple(X, Wop), make_tuple(ConvDilationW, ConvStrideW)),
-                make_pass_through_transform(E2)),
-            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}),
-            make_tuple(
-                Sequence<0>{}, Sequence<1>{}, Sequence<2, 3>{}, Sequence<4, 5>{}, Sequence<6>{}));
-
         const auto in_e_n_ho_wo_e2_grid_desc = transform_tensor_descriptor(
-            in_n_c0_y_ho_x_wo_e2_global_desc,
-            make_tuple(make_merge_transform(make_tuple(C0, Y, X)),
+            in_n_c0_hip_wip_e2_global_desc,
+            make_tuple(make_pass_through_transform(C0),
                        make_pass_through_transform(N),
                        make_pass_through_transform(Hop),
                        make_pass_through_transform(Wop),
                        make_pass_through_transform(E2)),
-            make_tuple(
-                Sequence<1, 2, 4>{}, Sequence<0>{}, Sequence<3>{}, Sequence<5>{}, Sequence<6>{}),
+            make_tuple(Sequence<1>{}, Sequence<0>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}),
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}));
 
         const auto b_e0_e1_n_ho_wo_e2_grid_desc = transform_tensor_descriptor(
@@ -171,6 +158,41 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}),
             make_tuple(
                 Sequence<0, 1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}, Sequence<5>{}));
+
+        // input2 tensor
+        const auto in2_hip_wip_global_desc = transform_tensor_descriptor(
+            make_naive_tensor_descriptor_packed(make_tuple(N, Hi, Wi)),
+            make_tuple(make_pad_transform(Hi, I1, Number<I1 + InRightPadH>{}),
+                       make_pad_transform(Wi, I1, Number<I1 + InRightPadH>{})),
+            make_tuple(Sequence<0>{}, Sequence<1>{}),
+            make_tuple(Sequence<0>{}, Sequence<1>{}));
+
+        const auto in2_y_ho_x_wo_global_desc = transform_tensor_descriptor(
+            in2_hip_wip_global_desc,
+            make_tuple(make_embed_transform(make_tuple(I3, Hop), make_tuple(I1, I1)),
+                       make_embed_transform(make_tuple(I3, Wop), make_tuple(I1, I1))),
+            make_tuple(Sequence<0>{}, Sequence<1>{}),
+            make_tuple(Sequence<0, 1>{}, Sequence<2, 3>{}));
+
+        const auto in2_e_ho_wo_grid_desc =
+            transform_tensor_descriptor(in2_y_ho_x_wo_global_desc,
+                                        make_tuple(make_merge_transform(make_tuple(I3, I3)),
+                                                   make_pass_through_transform(Hop),
+                                                   make_pass_through_transform(Wop)),
+                                        make_tuple(Sequence<0, 2>{}, Sequence<1>{}, Sequence<3>{}),
+                                        make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}));
+
+        const auto d_e_ho_wo_grid_desc =
+            transform_tensor_descriptor(in2_e_ho_wo_grid_desc,
+                                        make_tuple(make_right_pad_transform(Number<9>{}, I1),
+                                                   make_pass_through_transform(Hop),
+                                                   make_pass_through_transform(Wop)),
+                                        make_tuple(Sequence<0, 2>{}, Sequence<1>{}, Sequence<3>{}),
+                                        make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}));
+
+        std::cout << "in2: " << d_e_ho_wo_grid_desc.GetLength(I0) << ", "
+                  << d_e_ho_wo_grid_desc.GetLength(I1) << ", " << d_e_ho_wo_grid_desc.GetLength(I2)
+                  << std::endl;
 
         // output tensor
         const auto c_k_n_hop_wop_grid_desc = transform_tensor_descriptor(
