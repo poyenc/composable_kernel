@@ -159,48 +159,13 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
             make_tuple(
                 Sequence<0, 1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}, Sequence<5>{}));
 
-        // input2 tensor
-        const auto in2_hip_wip_global_desc = transform_tensor_descriptor(
-            make_naive_tensor_descriptor_packed(make_tuple(N, Hi, Wi)),
-            make_tuple(make_pad_transform(Hi, I1, Number<I1 + InRightPadH>{}),
-                       make_pad_transform(Wi, I1, Number<I1 + InRightPadH>{})),
-            make_tuple(Sequence<0>{}, Sequence<1>{}),
-            make_tuple(Sequence<0>{}, Sequence<1>{}));
-
-        const auto in2_y_ho_x_wo_global_desc = transform_tensor_descriptor(
-            in2_hip_wip_global_desc,
-            make_tuple(make_embed_transform(make_tuple(I3, Hop), make_tuple(I1, I1)),
-                       make_embed_transform(make_tuple(I3, Wop), make_tuple(I1, I1))),
-            make_tuple(Sequence<0>{}, Sequence<1>{}),
-            make_tuple(Sequence<0, 1>{}, Sequence<2, 3>{}));
-
-        const auto in2_e_ho_wo_grid_desc =
-            transform_tensor_descriptor(in2_y_ho_x_wo_global_desc,
-                                        make_tuple(make_merge_transform(make_tuple(I3, I3)),
-                                                   make_pass_through_transform(Hop),
-                                                   make_pass_through_transform(Wop)),
-                                        make_tuple(Sequence<0, 2>{}, Sequence<1>{}, Sequence<3>{}),
-                                        make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}));
-
-        const auto d_e_ho_wo_grid_desc =
-            transform_tensor_descriptor(in2_e_ho_wo_grid_desc,
-                                        make_tuple(make_right_pad_transform(Number<9>{}, I1),
-                                                   make_pass_through_transform(Hop),
-                                                   make_pass_through_transform(Wop)),
-                                        make_tuple(Sequence<0, 2>{}, Sequence<1>{}, Sequence<3>{}),
-                                        make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}));
-
-        std::cout << "in2: " << d_e_ho_wo_grid_desc.GetLength(I0) << ", "
-                  << d_e_ho_wo_grid_desc.GetLength(I1) << ", " << d_e_ho_wo_grid_desc.GetLength(I2)
-                  << std::endl;
-
         // output tensor
         const auto c_k_n_hop_wop_grid_desc = transform_tensor_descriptor(
             make_naive_tensor_descriptor_packed(make_tuple(N, K0, Ho, Wo, K1)),
             make_tuple(make_merge_transform(make_tuple(K0, K1)),
                        make_pass_through_transform(N),
-                       make_pad_transform(Ho, I0, OutRightPadH),
-                       make_pad_transform(Wo, I0, OutRightPadW)),
+                       make_right_pad_transform(Ho, OutRightPadH),
+                       make_right_pad_transform(Wo, OutRightPadW)),
             make_tuple(Sequence<1, 4>{}, Sequence<0>{}, Sequence<2>{}, Sequence<3>{}),
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}));
 
@@ -306,18 +271,18 @@ struct DriverDynamicConvolutionBiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1_kc
         static_assert(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.IsKnownAtCompileTime(), "");
         static_assert(c_blockid_to_k_n_h_w_block_cluster_adaptor.IsKnownAtCompileTime(), "");
 
-        const auto kernel =
-            kernel_gemm_softmax_dlops_v3<GridwiseGemm,
-                                         FloatAB,
-                                         FloatAcc,
-                                         FloatBias,
-                                         FloatC,
-                                         remove_reference_t<AGridDesc_E0_E1_K0_K1_E2>,
-                                         remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,
-                                         remove_reference_t<CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2>,
-                                         remove_reference_t<CBlockIdToBlockClusterAdaptor_K_N_H_W>,
-                                         has_main_e0_block_loop,
-                                         activ_type>;
+        const auto kernel = kernel_gemm_bias_activ_dlops_v3<
+            GridwiseGemm,
+            FloatAB,
+            FloatAcc,
+            FloatBias,
+            FloatC,
+            remove_reference_t<AGridDesc_E0_E1_K0_K1_E2>,
+            remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,
+            remove_reference_t<CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2>,
+            remove_reference_t<CBlockIdToBlockClusterAdaptor_K_N_H_W>,
+            has_main_e0_block_loop,
+            activ_type>;
 
         ave_time = launch_and_time_kernel(kernel,
                                           nrepeat,

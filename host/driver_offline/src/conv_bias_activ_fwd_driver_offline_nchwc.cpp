@@ -82,40 +82,6 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                out.mDesc.GetLengths()[2],
                                out.mDesc.GetLengths()[3],
                                out.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
-
-    auto f_softmax = [&](auto n, auto ho, auto wo) {
-        float x_max = 0;
-        for(int k0 = 0; k0 < out.mDesc.GetLengths()[1]; ++k0)
-        {
-            for(int k1 = 0; k1 < out.mDesc.GetLengths()[4]; ++k1)
-            {
-                x_max = max(x_max, out(n, k0, ho, wo, k1));
-            }
-        }
-
-        float x_sum = 0;
-        for(int k0 = 0; k0 < out.mDesc.GetLengths()[1]; ++k0)
-        {
-            for(int k1 = 0; k1 < out.mDesc.GetLengths()[4]; ++k1)
-            {
-                out(n, k0, ho, wo, k1) = exp(out(n, k0, ho, wo, k1) - x_max);
-                x_sum += out(n, k0, ho, wo, k1);
-            }
-        }
-
-        for(int k0 = 0; k0 < out.mDesc.GetLengths()[1]; ++k0)
-        {
-            for(int k1 = 0; k1 < out.mDesc.GetLengths()[4]; ++k1)
-            {
-                out(n, k0, ho, wo, k1) = out(n, k0, ho, wo, k1) / x_sum;
-            }
-        }
-    };
-
-    make_ParallelTensorFunctor(f_softmax,
-                               out.mDesc.GetLengths()[0],
-                               out.mDesc.GetLengths()[2],
-                               out.mDesc.GetLengths()[3])(std::thread::hardware_concurrency());
 }
 
 int main(int argc, char* argv[])

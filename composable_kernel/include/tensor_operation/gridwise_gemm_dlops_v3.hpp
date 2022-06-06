@@ -620,6 +620,8 @@ template <typename GridwiseGemm,
           typename AGridDesc_E0_E1_K0_K1_E2,
           typename BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2,
           typename CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2,
+          typename DGridDesc_E_H0_H1_H2_W0_W1_W2,
+          typename DGridDesc_K_H0_H1_H2_W0_W1_W2,
           typename CBlockIdToBlockClusterAdaptor_K_N_H_W,
           bool HasMainE0BlockLoop,
           ActivTypeEnum_t ActivType>
@@ -631,6 +633,9 @@ __global__ void
                                      const FloatAB* __restrict__ p_b_grid,
                                      const FloatBias* __restrict__ p_bias_grid,
                                      FloatC* __restrict__ p_c_grid,
+                                     const FloatC* __restrict__ p_in1_grid,
+                                     const FloatC* __restrict__ p_in2_grid,
+                                     FloatC* __restrict__ p_out_grid,
                                      float scaleGemm)
 {
     constexpr index_t shared_block_size =
@@ -694,21 +699,34 @@ __global__ void
                          bias_k0_k1_grid_desc,
                          c_k1_n_h2_w2_thread_gemm_desc);
 
+    // Sotfmax
+    GridwiseGemm::SoftmaxOp(c_thread_buf, c_k1_n_h2_w2_thread_gemm_desc);
+
+    constexpr auto d_e_h0_h1_h2_w0_w1_w2_grid_desc = DGridDesc_E_H0_H1_H2_W0_W1_W2{};
+    constexpr auto d_k_h0_h1_h2_w0_w1_w2_grid_desc = DGridDesc_K_H0_H1_H2_W0_W1_W2{};
+
+    auto in1_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_in1_grid, d_e_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+    auto in2_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_in2_grid, d_e_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    auto out_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_out_grid, d_k_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    GridwiseGemm::FilterOp(c_thread_buf,
+                           c_k1_n_h2_w2_thread_gemm_desc,
+                           in1_global_buf,
+                           in2_global_buf,
+                           d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                           out_global_buf,
+                           d_k_h0_h1_h2_w0_w1_w2_grid_desc,
+                           c_k_n_h_w_block_cluster_idx,
+                           c_thread_mtx_index);
+
     auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
 
-    constexpr auto d_k1p_n_h2_w2_thread_gemm_desc = GridwiseGemm::MakeCK1pNH2W2ThreadDescriptor();
-
-    StaticBuffer<AddressSpaceEnum_t::Vgpr,
-                 FloatC,
-                 d_k1p_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(),
-                 true>
-        d_thread_buf;
-
-    GridwiseGemm::SoftmaxOp(
-        c_thread_buf, d_thread_buf, c_k1_n_h2_w2_thread_gemm_desc, d_k1p_n_h2_w2_thread_gemm_desc);
-
-    GridwiseGemm::WriteOut(d_thread_buf,
+    GridwiseGemm::WriteOut(c_thread_buf,
                            c_global_buf,
                            c_k_n_h_w_block_cluster_idx,
                            c_thread_mtx_index,
@@ -881,6 +899,7 @@ struct GridwiseGemmDlops_km_kn_mn_v3
     static constexpr auto I3 = Number<3>{};
     static constexpr auto I4 = Number<4>{};
     static constexpr auto I5 = Number<5>{};
+    static constexpr auto I6 = Number<6>{};
 
     static constexpr auto E1 = Number<E1_>{};
     static constexpr auto E2 = Number<E2_>{};
@@ -1037,6 +1056,33 @@ struct GridwiseGemmDlops_km_kn_mn_v3
             make_tuple(Sequence<0, 1>{}, Sequence<2>{}, Sequence<3, 4, 5>{}, Sequence<6, 7, 8>{}));
 
         return c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc;
+    }
+
+    template <typename DGridDesc_K_N_Ho_Wo>
+    __host__ __device__ static constexpr auto
+    MakeDKNH0H1H2W0W1W2GridDescriptor(const DGridDesc_K_N_Ho_Wo& d_e_ho_wo_grid_desc)
+    {
+        const auto K  = d_e_ho_wo_grid_desc.GetLength(I0);
+        const auto Ho = d_e_ho_wo_grid_desc.GetLength(I1);
+        const auto Wo = d_e_ho_wo_grid_desc.GetLength(I2);
+
+        const auto H2 = Number<HoPerThread>{};
+        const auto H1 = Number<HoPerBlock / HoPerThread>{};
+        const auto H0 = Ho / (H1 * H2);
+
+        const auto W2 = Number<WoPerThread>{};
+        const auto W1 = Number<WoPerBlock / WoPerThread>{};
+        const auto W0 = Wo / (W1 * W2);
+
+        const auto d_e_h0_h1_h2_w0_w1_w2_grid_desc = transform_tensor_descriptor(
+            d_e_ho_wo_grid_desc,
+            make_tuple(make_unmerge_transform(make_tuple(K)),
+                       make_unmerge_transform(make_tuple(H0, H1, H2)),
+                       make_unmerge_transform(make_tuple(W0, W1, W2))),
+            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}),
+            make_tuple(Sequence<0>{}, Sequence<1, 2, 3>{}, Sequence<4, 5, 6>{}));
+
+        return d_e_h0_h1_h2_w0_w1_w2_grid_desc;
     }
 
     template <typename DGridDesc_Kx_N_Hx_Wx>
@@ -1215,13 +1261,10 @@ struct GridwiseGemmDlops_km_kn_mn_v3
         return c_k1_n_h2_w2_thread_gemm_desc;
     }
 
-    __host__ __device__ static constexpr auto MakeCK1pNH2W2ThreadDescriptor()
+    __host__ __device__ static constexpr auto MakeDKH2W2ThreadDescriptor()
     {
-        constexpr index_t KPack                      = 2;
-        constexpr index_t KPerThreadPad              = (KPerThread + KPack - 1) / KPack * KPack;
-        constexpr auto c_k1_n_h2_w2_thread_gemm_desc = make_naive_tensor_descriptor_packed(
-            make_tuple(Number<KPerThreadPad>{}, I1, Number<HoPerThread>{}, Number<WoPerThread>{}));
-        return c_k1_n_h2_w2_thread_gemm_desc;
+        return make_naive_tensor_descriptor_packed(
+            make_tuple(Number<10>{}, Number<HoPerThread>{}, Number<WoPerThread>{}));
     }
 
     // using CThreadDesc_K1_N_H2_W2 = decltype(MakeCK1NH2W2ThreadDescriptor());
@@ -1275,19 +1318,12 @@ struct GridwiseGemmDlops_km_kn_mn_v3
         return c_k_n_h_w_block_cluster_idx;
     }
 
-    template <typename CThreadBuff,
-              typename DThreadBuff,
-              typename CThreadDesc_K1_N_H2_W2,
-              typename DThreadDesc_K1_N_H2_W2>
-    __device__ static void SoftmaxOp(CThreadBuff& c_thread_buf,
-                                     DThreadBuff& d_thread_buf,
-                                     const CThreadDesc_K1_N_H2_W2&,
-                                     const DThreadDesc_K1_N_H2_W2&)
+    template <typename CThreadBuff, typename CThreadDesc_K1_N_H2_W2>
+    __device__ static void SoftmaxOp(CThreadBuff& c_thread_buf, const CThreadDesc_K1_N_H2_W2&)
 
     {
 
         constexpr auto c_k1_n_h2_w2_thread_gemm_desc = CThreadDesc_K1_N_H2_W2{};
-        constexpr auto d_k1_n_h2_w2_thread_gemm_desc = DThreadDesc_K1_N_H2_W2{};
 
         static_for<0, HoPerThread, 1>{}([&](auto hi) {
             static_for<0, WoPerThread, 1>{}([&](auto wi) {
@@ -1311,12 +1347,188 @@ struct GridwiseGemmDlops_km_kn_mn_v3
                 static_for<0, KPerThread, 1>{}([&](auto ki) {
                     auto c_offset          = Number<c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
                         make_tuple(ki, 0, hi, wi))>{};
-                    auto d_offset          = Number<d_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
-                        make_tuple(ki, 0, hi, wi))>{};
-                    d_thread_buf(d_offset) = c_thread_buf[c_offset] / sum;
+                    c_thread_buf(c_offset) = c_thread_buf[c_offset] / sum;
                 });
             });
         });
+    }
+
+    template <typename CThreadBuff,
+              typename CThreadDesc_K1_N_H2_W2,
+              typename InGlobalBuff,
+              typename OutGlobalBuff,
+              typename CBlockIndex,
+              typename CThreadIndex,
+              typename DGridDesc_E_H0_H1_H2_W0_W1_W2,
+              typename DGridDesc_K_H0_H1_H2_W0_W1_W2>
+    __device__ static void FilterOp(CThreadBuff c_thread_buf,
+                                    CThreadDesc_K1_N_H2_W2 c_k1_n_h2_w2_thread_desc,
+                                    InGlobalBuff in1_global_buf,
+                                    InGlobalBuff in2_global_buf,
+                                    DGridDesc_E_H0_H1_H2_W0_W1_W2 d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                                    OutGlobalBuff out_global_buf,
+                                    DGridDesc_K_H0_H1_H2_W0_W1_W2 d_k_h0_h1_h2_w0_w1_w2_grid_desc,
+                                    CBlockIndex c_block_idx,
+                                    CThreadIndex c_thread_idx)
+    {
+        constexpr auto d_e_h0_h1_h2_w0_w1_w2_thread_desc = make_naive_tensor_descriptor_packed(
+            make_tuple(Number<10>{}, I1, I1, Number<HoPerThread>{}, I1, I1, Number<WoPerThread>{}));
+
+        StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                     FloatC,
+                     d_e_h0_h1_h2_w0_w1_w2_thread_desc.GetElementSpaceSize(),
+                     true>
+            filter_thread_buf;
+
+        static_for<0, 9, 1>{}([&](auto ki) {
+            static_for<0, HoPerThread, 1>{}([&](auto hi) {
+                static_for<0, WoPerThread, 1>{}([&](auto wi) {
+                    auto c_offset = Number<c_k1_n_h2_w2_thread_desc.CalculateOffset(
+                        make_tuple(ki, 0, hi, wi))>{};
+                    auto d_offset = Number<d_e_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                        make_tuple(ki, 0, 0, hi, 0, 0, wi))>{};
+                    filter_thread_buf(d_offset) = c_thread_buf[c_offset];
+                });
+            });
+        });
+
+        const index_t ho_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I2]);
+        const index_t wo_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I3]);
+
+        const auto ho_thread_id = c_thread_idx[I2];
+        const auto wo_thread_id = c_thread_idx[I3];
+
+        StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                     FloatC,
+                     d_e_h0_h1_h2_w0_w1_w2_thread_desc.GetElementSpaceSize(),
+                     true>
+            in_thread_buf;
+
+        auto img_threadwise_transfer =
+            ThreadwiseTensorSliceTransfer_v2<FloatC,
+                                             FloatC,
+                                             decltype(d_e_h0_h1_h2_w0_w1_w2_grid_desc),
+                                             decltype(d_e_h0_h1_h2_w0_w1_w2_thread_desc),
+                                             Sequence<10, I1, I1, HoPerThread, I1, I1, WoPerThread>,
+                                             Sequence<0, 1, 2, 3, 4, 5, 6>,
+                                             0,
+                                             1,
+                                             true,
+                                             true>(
+                d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                make_multi_index(
+                    0, ho_block_work_id, ho_thread_id, 0, wo_block_work_id, wo_thread_id, 0));
+
+        img_threadwise_transfer.Run(d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                                    in1_global_buf,
+                                    d_e_h0_h1_h2_w0_w1_w2_thread_desc,
+                                    make_tuple(I0, I0, I0, I0, I0, I0, I0),
+                                    in_thread_buf);
+
+        constexpr auto d_k_h0_h1_h2_w0_w1_w2_thread_desc = make_naive_tensor_descriptor_packed(
+            make_tuple(I1, I1, I1, Number<HoPerThread>{}, I1, I1, Number<WoPerThread>{}));
+
+        StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                     FloatAcc,
+                     d_k_h0_h1_h2_w0_w1_w2_thread_desc.GetElementSpaceSize(),
+                     true>
+            out_thread_buf;
+
+        static_for<0, HoPerThread, 1>{}([&](auto h) {
+            static_for<0, WoPerThread, 1>{}([&](auto w) {
+                static_for<0, 10, 2>{}([&](auto e1) {
+                    vector_type<FloatC, 2> a_vec, b_vec;
+
+                    static_for<0, 2, 1>{}([&](auto e2) {
+                        constexpr index_t a_offset =
+                            c_k1_n_h2_w2_thread_desc.CalculateOffset(make_tuple(e1 + e2, 0, h, w));
+
+                        a_vec.template AsType<FloatC>()(Number<e2>{}) =
+                            filter_thread_buf[Number<a_offset>{}];
+
+                        constexpr index_t b_offset =
+                            d_e_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                                make_tuple(e1 + e2, 0, 0, h, 0, 0, w));
+
+                        b_vec.template AsType<FloatC>()(Number<e2>{}) =
+                            in_thread_buf[Number<b_offset>{}];
+                    });
+
+                    constexpr index_t c_offset = d_k_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                        make_tuple(0, 0, 0, h, 0, 0, w));
+
+                    using ab_vec_t = typename vector_type<FloatC, 2>::type;
+
+                    inner_product<ab_vec_t, ab_vec_t, FloatAcc>(
+                        a_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                        b_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                        out_thread_buf(Number<c_offset>{}));
+                });
+            });
+        });
+
+#if 1
+        img_threadwise_transfer.Run(d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                                    in2_global_buf,
+                                    d_e_h0_h1_h2_w0_w1_w2_thread_desc,
+                                    make_tuple(I0, I0, I0, I0, I0, I0, I0),
+                                    in_thread_buf);
+
+        static_for<0, HoPerThread, 1>{}([&](auto h) {
+            static_for<0, WoPerThread, 1>{}([&](auto w) {
+                static_for<0, 10, 2>{}([&](auto e1) {
+                    vector_type<FloatC, 2> a_vec, b_vec;
+
+                    static_for<0, 2, 1>{}([&](auto e2) {
+                        constexpr index_t a_offset =
+                            c_k1_n_h2_w2_thread_desc.CalculateOffset(make_tuple(e1 + e2, 0, h, w));
+
+                        a_vec.template AsType<FloatC>()(Number<e2>{}) =
+                            filter_thread_buf[Number<a_offset>{}];
+
+                        constexpr index_t b_offset =
+                            d_e_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                                make_tuple(e1 + e2, 0, 0, h, 0, 0, w));
+
+                        b_vec.template AsType<FloatC>()(Number<e2>{}) =
+                            in_thread_buf[Number<b_offset>{}];
+                    });
+
+                    constexpr index_t c_offset = d_k_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                        make_tuple(0, 0, 0, h, 0, 0, w));
+
+                    using ab_vec_t = typename vector_type<FloatC, 2>::type;
+
+                    inner_product<ab_vec_t, ab_vec_t, FloatAcc>(
+                        a_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                        b_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                        out_thread_buf(Number<c_offset>{}));
+                });
+            });
+        });
+#endif
+
+        ThreadwiseTensorSliceTransfer_v1r3<FloatAcc,
+                                           FloatC,
+                                           decltype(d_k_h0_h1_h2_w0_w1_w2_thread_desc),
+                                           decltype(d_k_h0_h1_h2_w0_w1_w2_grid_desc),
+                                           ck::tensor_operation::element_wise::PassThrough,
+                                           Sequence<I1, I1, I1, HoPerThread, I1, I1, WoPerThread>,
+                                           Sequence<0, 1, 2, 3, 4, 5, 6>,
+                                           0,
+                                           1,
+                                           CGlobalMemoryDataOperation,
+                                           1,
+                                           true>(
+            d_k_h0_h1_h2_w0_w1_w2_grid_desc,
+            make_multi_index(
+                0, ho_block_work_id, ho_thread_id, 0, wo_block_work_id, wo_thread_id, 0),
+            ck::tensor_operation::element_wise::PassThrough{})
+            .Run(d_k_h0_h1_h2_w0_w1_w2_thread_desc,
+                 make_tuple(I0, I0, I0, I0, I0, I0, I0),
+                 out_thread_buf,
+                 d_k_h0_h1_h2_w0_w1_w2_grid_desc,
+                 out_global_buf);
     }
 
     template <typename BiasGlobalBuff,
