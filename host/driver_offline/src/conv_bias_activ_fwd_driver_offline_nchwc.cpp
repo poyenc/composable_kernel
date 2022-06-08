@@ -72,8 +72,8 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
             }
         }
         v += bias(k0, k1);
-        // out(n, k0, ho, wo, k1) = c_elementwise_op(v);
-        out(n, k0, ho, wo, k1) = v;
+        out(n, k0, ho, wo, k1) = c_elementwise_op(v);
+        // out(n, k0, ho, wo, k1) = v;
     };
 
     make_ParallelTensorFunctor(f_nchw,
@@ -212,7 +212,7 @@ int main(int argc, char* argv[])
     using in_data_t  = float;
     using acc_data_t = float;
     using out_data_t = float;
-#elif 1
+#elif 0
     using in_data_t   = half_t;
     using acc_data_t  = float;
     using bias_data_t = half_t;
@@ -347,25 +347,23 @@ int main(int argc, char* argv[])
 
     if(do_verification)
     {
-        host_direct_convolution_nchwc(
-            in,
-            wei,
-            bias,
-            out_host,
-            make_tuple(conv_stride_h, conv_stride_w),
-            make_tuple(conv_dilation_h, conv_dilation_w),
-            make_tuple(in_left_pad_h, in_left_pad_w),
-            make_tuple(in_right_pad_h, in_right_pad_w),
-            // ck::tensor_operation::element_wise::RequantReluRequant{0.3});
-            ck::tensor_operation::element_wise::RequantHardTanh{0.3});
+        host_direct_convolution_nchwc(in,
+                                      wei,
+                                      bias,
+                                      out_host,
+                                      make_tuple(conv_stride_h, conv_stride_w),
+                                      make_tuple(conv_dilation_h, conv_dilation_w),
+                                      make_tuple(in_left_pad_h, in_left_pad_w),
+                                      make_tuple(in_right_pad_h, in_right_pad_w),
+                                      ck::tensor_operation::element_wise::RequantHardTanh{0.3});
 
         check_error(out_host, out_device);
 
         if(do_log)
         {
-            LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "wei: ", wei.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "bias: ", bias.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "wei: ", wei.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "bias: ", bias.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out_host  : ", out_host.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") << std::endl;
         }

@@ -606,10 +606,9 @@ __global__ void
                            c_k_n_h_w_block_cluster_idx,
                            c_thread_mtx_index,
                            c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
-                           ck::tensor_operation::element_wise::PassThrough{}
+                           // ck::tensor_operation::element_wise::PassThrough{}
                            // ck::tensor_operation::element_wise::RequantReluRequant{scaleGemm}
-                           // ck::tensor_operation::element_wise::RequantHardTanh{scaleGemm}
-    );
+                           ck::tensor_operation::element_wise::RequantHardTanh{scaleGemm});
 }
 
 template <typename GridwiseGemm,
