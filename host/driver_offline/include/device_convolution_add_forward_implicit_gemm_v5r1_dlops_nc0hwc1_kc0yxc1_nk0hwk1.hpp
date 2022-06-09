@@ -77,13 +77,6 @@ void device_convolution_add_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0yxc1_nk0
     scale_k0_k1_device_buf.ToDevice(scale_k0_k1.mData.data());
     add_n_k0_hox2_wox2_k1_device_buf.ToDevice(add_n_k0_hox2_wox2_k1.mData.data());
 
-    constexpr index_t InWeiVectorSize = 8;
-
-    if(C1 % InWeiVectorSize != 0)
-    {
-        throw std::runtime_error("wrong! C1 cannot be divided by InWeiVectorSize");
-    }
-
 #if USE_CONV_FIG
     constexpr index_t BlockSize = CONV_BLOCK_SIZE;
 

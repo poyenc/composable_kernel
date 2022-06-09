@@ -83,13 +83,6 @@ void device_convolution_maxpool_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0yxc1
     scale_k0_k1_device_buf.ToDevice(scale_k0_k1.mData.data());
     max_n_k0_hx_wx_k1_device_buf.ToDevice(max_n_k0_hx_wx_k1.mData.data());
 
-    constexpr index_t InWeiVectorSize = 8;
-
-    if(C1 % InWeiVectorSize != 0)
-    {
-        throw std::runtime_error("wrong! C1 cannot be divided by InWeiVectorSize");
-    }
-
 #if USE_CONV_FIG
     constexpr index_t BlockSize = CONV_BLOCK_SIZE;
 
@@ -193,11 +186,6 @@ void device_convolution_maxpool_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0yxc1
     constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
     constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
 #endif
-
-    if(KPerThread % InWeiVectorSize != 0)
-    {
-        throw std::runtime_error("wrong! C1 cannot be divided by InWeiVectorSize");
-    }
 
     const auto in_n_c0_hi_wi_c1_desc =
         make_naive_tensor_descriptor_packed(make_tuple(N, C0, Hi, Wi, E2));
