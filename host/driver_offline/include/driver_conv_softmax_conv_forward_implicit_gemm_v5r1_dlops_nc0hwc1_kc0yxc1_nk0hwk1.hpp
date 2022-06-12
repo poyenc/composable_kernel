@@ -8,6 +8,227 @@
 
 namespace ck {
 
+template <typename CThreadBuff,
+          typename CThreadDesc_K1_N_H2_W2,
+          typename CBlockIndex,
+          typename CThreadIndex,
+          typename In1GlobalBuff,
+          typename In2GlobalBuff,
+          typename OutGlobalBuff,
+          typename DGridDesc_E_H0_H1_H2_W0_W1_W2,
+          typename EGridDesc_K_H0_H1_H2_W0_W1_W2>
+__device__ static void FilterOp(CThreadBuff c_thread_buf,
+                                CThreadDesc_K1_N_H2_W2 c_k1_n_h2_w2_thread_desc,
+                                CBlockIndex c_block_idx,
+                                CThreadIndex c_thread_idx,
+                                In1GlobalBuff in1_global_buf,
+                                In2GlobalBuff in2_global_buf,
+                                OutGlobalBuff out_global_buf,
+                                DGridDesc_E_H0_H1_H2_W0_W1_W2 d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                                EGridDesc_K_H0_H1_H2_W0_W1_W2 e_k_h0_h1_h2_w0_w1_w2_grid_desc)
+{
+    static constexpr auto I0 = Number<0>{};
+    static constexpr auto I1 = Number<1>{};
+    static constexpr auto I2 = Number<2>{};
+    static constexpr auto I3 = Number<3>{};
+
+    using FloatC   = remove_cvref_t<typename OutGlobalBuff::type>;
+    using FloatAcc = float;
+
+    constexpr index_t HoPerThread = c_k1_n_h2_w2_thread_desc.GetLength(Number<2>{});
+    constexpr index_t WoPerThread = c_k1_n_h2_w2_thread_desc.GetLength(Number<3>{});
+
+    constexpr auto d_e_h0_h1_h2_w0_w1_w2_thread_desc = make_naive_tensor_descriptor_packed(
+        make_tuple(Number<10>{}, I1, I1, Number<HoPerThread>{}, I1, I1, Number<WoPerThread>{}));
+
+    StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                 FloatC,
+                 d_e_h0_h1_h2_w0_w1_w2_thread_desc.GetElementSpaceSize(),
+                 true>
+        filter_thread_buf;
+
+    static_for<0, 9, 1>{}([&](auto ki) {
+        static_for<0, HoPerThread, 1>{}([&](auto hi) {
+            static_for<0, WoPerThread, 1>{}([&](auto wi) {
+                auto c_offset =
+                    Number<c_k1_n_h2_w2_thread_desc.CalculateOffset(make_tuple(ki, 0, hi, wi))>{};
+                auto d_offset = Number<d_e_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                    make_tuple(ki, 0, 0, hi, 0, 0, wi))>{};
+                filter_thread_buf(d_offset) = c_thread_buf[c_offset];
+            });
+        });
+    });
+
+    const index_t ho_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I2]);
+    const index_t wo_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I3]);
+
+    const auto ho_thread_id = c_thread_idx[I2];
+    const auto wo_thread_id = c_thread_idx[I3];
+
+    StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                 FloatC,
+                 d_e_h0_h1_h2_w0_w1_w2_thread_desc.GetElementSpaceSize(),
+                 true>
+        in_thread_buf;
+
+    auto img_threadwise_transfer =
+        ThreadwiseTensorSliceTransfer_v2<FloatC,
+                                         FloatC,
+                                         decltype(d_e_h0_h1_h2_w0_w1_w2_grid_desc),
+                                         decltype(d_e_h0_h1_h2_w0_w1_w2_thread_desc),
+                                         Sequence<10, I1, I1, HoPerThread, I1, I1, WoPerThread>,
+                                         Sequence<0, 1, 2, 3, 4, 5, 6>,
+                                         0,
+                                         1,
+                                         true,
+                                         true>(
+            d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+            make_multi_index(
+                0, ho_block_work_id, ho_thread_id, 0, wo_block_work_id, wo_thread_id, 0));
+
+    img_threadwise_transfer.Run(d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                                in1_global_buf,
+                                d_e_h0_h1_h2_w0_w1_w2_thread_desc,
+                                make_tuple(I0, I0, I0, I0, I0, I0, I0),
+                                in_thread_buf);
+
+    constexpr auto e_k_h0_h1_h2_w0_w1_w2_thread_desc = make_naive_tensor_descriptor_packed(
+        make_tuple(I1, I1, I1, Number<HoPerThread>{}, I1, I1, Number<WoPerThread>{}));
+
+    StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                 FloatAcc,
+                 e_k_h0_h1_h2_w0_w1_w2_thread_desc.GetElementSpaceSize(),
+                 true>
+        out_thread_buf;
+
+    static_for<0, HoPerThread, 1>{}([&](auto h) {
+        static_for<0, WoPerThread, 1>{}([&](auto w) {
+            static_for<0, 10, 2>{}([&](auto e1) {
+                vector_type<FloatC, 2> a_vec, b_vec;
+
+                static_for<0, 2, 1>{}([&](auto e2) {
+                    constexpr index_t a_offset =
+                        c_k1_n_h2_w2_thread_desc.CalculateOffset(make_tuple(e1 + e2, 0, h, w));
+
+                    a_vec.template AsType<FloatC>()(Number<e2>{}) =
+                        filter_thread_buf[Number<a_offset>{}];
+
+                    constexpr index_t b_offset = d_e_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                        make_tuple(e1 + e2, 0, 0, h, 0, 0, w));
+
+                    b_vec.template AsType<FloatC>()(Number<e2>{}) =
+                        in_thread_buf[Number<b_offset>{}];
+                });
+
+                constexpr index_t c_offset = e_k_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                    make_tuple(0, 0, 0, h, 0, 0, w));
+
+                using ab_vec_t = typename vector_type<FloatC, 2>::type;
+
+                inner_product<ab_vec_t, ab_vec_t, FloatAcc>(
+                    a_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                    b_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                    out_thread_buf(Number<c_offset>{}));
+            });
+        });
+    });
+
+    img_threadwise_transfer.Run(d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+                                in2_global_buf,
+                                d_e_h0_h1_h2_w0_w1_w2_thread_desc,
+                                make_tuple(I0, I0, I0, I0, I0, I0, I0),
+                                in_thread_buf);
+
+    static_for<0, HoPerThread, 1>{}([&](auto h) {
+        static_for<0, WoPerThread, 1>{}([&](auto w) {
+            static_for<0, 10, 2>{}([&](auto e1) {
+                vector_type<FloatC, 2> a_vec, b_vec;
+
+                static_for<0, 2, 1>{}([&](auto e2) {
+                    constexpr index_t a_offset =
+                        c_k1_n_h2_w2_thread_desc.CalculateOffset(make_tuple(e1 + e2, 0, h, w));
+
+                    a_vec.template AsType<FloatC>()(Number<e2>{}) =
+                        filter_thread_buf[Number<a_offset>{}];
+
+                    constexpr index_t b_offset = d_e_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                        make_tuple(e1 + e2, 0, 0, h, 0, 0, w));
+
+                    b_vec.template AsType<FloatC>()(Number<e2>{}) =
+                        in_thread_buf[Number<b_offset>{}];
+                });
+
+                constexpr index_t c_offset = e_k_h0_h1_h2_w0_w1_w2_thread_desc.CalculateOffset(
+                    make_tuple(0, 0, 0, h, 0, 0, w));
+
+                using ab_vec_t = typename vector_type<FloatC, 2>::type;
+
+                inner_product<ab_vec_t, ab_vec_t, FloatAcc>(
+                    a_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                    b_vec.template AsType<ab_vec_t>()[Number<0>{}],
+                    out_thread_buf(Number<c_offset>{}));
+            });
+        });
+    });
+
+    ThreadwiseTensorSliceTransfer_v1r3<FloatAcc,
+                                       FloatC,
+                                       decltype(e_k_h0_h1_h2_w0_w1_w2_thread_desc),
+                                       decltype(e_k_h0_h1_h2_w0_w1_w2_grid_desc),
+                                       ck::tensor_operation::element_wise::PassThrough,
+                                       Sequence<I1, I1, I1, HoPerThread, I1, I1, WoPerThread>,
+                                       Sequence<0, 1, 2, 3, 4, 5, 6>,
+                                       0,
+                                       1,
+                                       InMemoryDataOperationEnum_t::Set,
+                                       1,
+                                       true>(
+        e_k_h0_h1_h2_w0_w1_w2_grid_desc,
+        make_multi_index(0, ho_block_work_id, ho_thread_id, 0, wo_block_work_id, wo_thread_id, 0),
+        ck::tensor_operation::element_wise::PassThrough{})
+        .Run(e_k_h0_h1_h2_w0_w1_w2_thread_desc,
+             make_tuple(I0, I0, I0, I0, I0, I0, I0),
+             out_thread_buf,
+             e_k_h0_h1_h2_w0_w1_w2_grid_desc,
+             out_global_buf);
+}
+
+template <typename CThreadBuff, typename CThreadDesc_K1_N_H2_W2>
+__device__ void SoftmaxOp(CThreadBuff& c_thread_buf, const CThreadDesc_K1_N_H2_W2&)
+
+{
+    constexpr auto c_k1_n_h2_w2_thread_gemm_desc = CThreadDesc_K1_N_H2_W2{};
+
+    constexpr index_t KPerThread  = c_k1_n_h2_w2_thread_gemm_desc.GetLength(Number<0>{});
+    constexpr index_t HoPerThread = c_k1_n_h2_w2_thread_gemm_desc.GetLength(Number<2>{});
+    constexpr index_t WoPerThread = c_k1_n_h2_w2_thread_gemm_desc.GetLength(Number<3>{});
+
+    static_for<0, HoPerThread, 1>{}([&](auto hi) {
+        static_for<0, WoPerThread, 1>{}([&](auto wi) {
+            float max_x = 0;
+            static_for<0, KPerThread, 1>{}([&](auto ki) {
+                auto c_offset = Number<c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
+                    make_tuple(ki, 0, hi, wi))>{};
+                max_x         = max(c_thread_buf[c_offset], max_x);
+            });
+
+            float sum = 0;
+            static_for<0, KPerThread, 1>{}([&](auto ki) {
+                auto c_offset          = Number<c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
+                    make_tuple(ki, 0, hi, wi))>{};
+                c_thread_buf(c_offset) = exp(c_thread_buf[c_offset] - max_x);
+                sum += c_thread_buf[c_offset];
+            });
+
+            static_for<0, KPerThread, 1>{}([&](auto ki) {
+                auto c_offset          = Number<c_k1_n_h2_w2_thread_gemm_desc.CalculateOffset(
+                    make_tuple(ki, 0, hi, wi))>{};
+                c_thread_buf(c_offset) = c_thread_buf[c_offset] / sum;
+            });
+        });
+    });
+}
+
 template <typename GridwiseGemm,
           typename FloatAB,
           typename FloatAcc,
@@ -17,7 +238,7 @@ template <typename GridwiseGemm,
           typename BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2,
           typename CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2,
           typename DGridDesc_E_H0_H1_H2_W0_W1_W2,
-          typename DGridDesc_K_H0_H1_H2_W0_W1_W2,
+          typename EGridDesc_K_H0_H1_H2_W0_W1_W2,
           typename CBlockIdToBlockClusterAdaptor_K_N_H_W,
           bool HasMainE0BlockLoop,
           ActivTypeEnum_t ActivType>
@@ -25,7 +246,7 @@ __global__ void
 #if CK_USE_LAUNCH_BOUNDS
     __launch_bounds__(CK_MAX_THREAD_PER_BLOCK, CK_MIN_BLOCK_PER_CU)
 #endif
-        kernel_gemm_softmax_dlops_v3(const FloatAB* __restrict__ p_a_grid,
+        kernel_conv_softmax_dlops_v3(const FloatAB* __restrict__ p_a_grid,
                                      const FloatAB* __restrict__ p_b_grid,
                                      const FloatBias* __restrict__ p_bias_grid,
                                      FloatC* __restrict__ p_c_grid,
@@ -96,28 +317,7 @@ __global__ void
                          c_k1_n_h2_w2_thread_gemm_desc);
 
     // Sotfmax
-    GridwiseGemm::SoftmaxOp(c_thread_buf, c_k1_n_h2_w2_thread_gemm_desc);
-
-    constexpr auto d_e_h0_h1_h2_w0_w1_w2_grid_desc = DGridDesc_E_H0_H1_H2_W0_W1_W2{};
-    constexpr auto d_k_h0_h1_h2_w0_w1_w2_grid_desc = DGridDesc_K_H0_H1_H2_W0_W1_W2{};
-
-    auto in1_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
-        p_in1_grid, d_e_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
-    auto in2_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
-        p_in2_grid, d_e_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
-
-    auto out_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
-        p_out_grid, d_k_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
-
-    GridwiseGemm::FilterOp(c_thread_buf,
-                           c_k1_n_h2_w2_thread_gemm_desc,
-                           in1_global_buf,
-                           in2_global_buf,
-                           d_e_h0_h1_h2_w0_w1_w2_grid_desc,
-                           out_global_buf,
-                           d_k_h0_h1_h2_w0_w1_w2_grid_desc,
-                           c_k_n_h_w_block_cluster_idx,
-                           c_thread_mtx_index);
+    SoftmaxOp(c_thread_buf, c_k1_n_h2_w2_thread_gemm_desc);
 
     auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
@@ -128,9 +328,29 @@ __global__ void
                            c_thread_mtx_index,
                            c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
                            ck::tensor_operation::element_wise::PassThrough{});
+
+    constexpr auto d_e_h0_h1_h2_w0_w1_w2_grid_desc = DGridDesc_E_H0_H1_H2_W0_W1_W2{};
+    constexpr auto e_k_h0_h1_h2_w0_w1_w2_grid_desc = EGridDesc_K_H0_H1_H2_W0_W1_W2{};
+
+    auto in1_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_in1_grid, d_e_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    auto in2_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_in2_grid, d_e_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    auto out_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_out_grid, e_k_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    FilterOp(c_thread_buf,
+             c_k1_n_h2_w2_thread_gemm_desc,
+             c_k_n_h_w_block_cluster_idx,
+             c_thread_mtx_index,
+             in1_global_buf,
+             in2_global_buf,
+             out_global_buf,
+             d_e_h0_h1_h2_w0_w1_w2_grid_desc,
+             e_k_h0_h1_h2_w0_w1_w2_grid_desc);
 }
-
-
 
 template <ck::index_t BlockSize,
           typename FloatAB,
@@ -159,7 +379,6 @@ template <ck::index_t BlockSize,
           ck::ActivTypeEnum_t activ_type>
 struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_kc0yxc1_nk0hwk1
 {
-
     static constexpr auto I0 = Number<0>{};
     static constexpr auto I1 = Number<1>{};
     static constexpr auto I2 = Number<2>{};
@@ -168,9 +387,9 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
     static constexpr auto I5 = Number<5>{};
     static constexpr auto I6 = Number<6>{};
 
-    template <typename DGridDesc_K_Ho_Wo>
+    template <typename EGridDesc_K_Ho_Wo>
     __host__ __device__ static constexpr auto
-    MakeDKH0H1H2W0W1W2GridDescriptor(const DGridDesc_K_Ho_Wo& d_e_ho_wo_grid_desc)
+    MakeDKH0H1H2W0W1W2GridDescriptor(const EGridDesc_K_Ho_Wo& d_e_ho_wo_grid_desc)
     {
         const auto K  = d_e_ho_wo_grid_desc.GetLength(I0);
         const auto Ho = d_e_ho_wo_grid_desc.GetLength(I1);
@@ -205,10 +424,10 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
     __host__ float Run(const ck::TensorDescriptor<Wei...>& wei_k_c0_y_x_c1_global_desc,
                        const ck::TensorDescriptor<In...>& in_n_c0_hi_wi_c1_global_desc,
                        const ck::TensorDescriptor<Out...>& out_n_k0_ho_wo_k1_global_desc,
-                       const ConvStrides&,
-                       const ConvDilations&,
-                       const InLeftPads&,
-                       const InRightPads&,
+                       const ConvStrides& conv_strides,
+                       const ConvDilations& conv_dilations,
+                       const InLeftPads& in_left_pads,
+                       const InRightPads& in_right_pads,
                        const FloatAB* __restrict__ p_a_grid,
                        const FloatAB* __restrict__ p_b_grid,
                        const FloatBias* __restrict__ p_bias_grid,
@@ -233,11 +452,21 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
         const auto Y = wei_k_c0_y_x_c1_global_desc.GetLength(I2);
         const auto X = wei_k_c0_y_x_c1_global_desc.GetLength(I3);
 
-        // const auto ConvStrideH = conv_strides[I0];
-        // const auto ConvStrideW = conv_strides[I1];
+        if(!(Y == 1 && X == 1))
+        {
+            throw std::runtime_error("wrong! GEMM size no divisible");
+        }
 
-        // const auto ConvDilationH = conv_dilations[I0];
-        // const auto ConvDilationW = conv_dilations[I1];
+        const auto ConvStrideH = conv_strides[I0];
+        const auto ConvStrideW = conv_strides[I1];
+
+        const auto ConvDilationH = conv_dilations[I0];
+        const auto ConvDilationW = conv_dilations[I1];
+
+        if(!(ConvStrideH == 1 && ConvStrideW == 1 && ConvDilationH == 1 && ConvDilationW == 1))
+        {
+            throw std::runtime_error("wrong! GEMM size no divisible");
+        }
 
 #if CK_EXPERIMENTAL_STATIC_TENSOR_DESCRIPTOR
         const auto Hop = Number<(Ho + HoPerBlock - 1) / HoPerBlock * HoPerBlock>{};
@@ -255,6 +484,12 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
 
         const auto InRightPadH = OutRightPadH;
         const auto InRightPadW = OutRightPadW;
+
+        if(!(in_left_pads[I0] == 0 && in_left_pads[I1] == 0 && in_right_pads[I0] == 0 &&
+             in_right_pads[I1] == 0))
+        {
+            throw std::runtime_error("wrong! GEMM size no divisible");
+        }
 
         constexpr auto E1 = Number<E1_>{};
         constexpr auto E2 = Number<E2_>{};
@@ -283,7 +518,6 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                                                    make_pass_through_transform(E2)),
                                         make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}),
                                         make_tuple(Sequence<0, 1>{}, Sequence<2>{}, Sequence<3>{}));
-
         // input tensor
         const auto in_n_c0_hip_wip_e2_global_desc = transform_tensor_descriptor(
             make_naive_tensor_descriptor_packed(make_tuple(N, C0, Hi, Wi, E2)),
@@ -315,6 +549,16 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
             make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}),
             make_tuple(
                 Sequence<0, 1>{}, Sequence<2>{}, Sequence<3>{}, Sequence<4>{}, Sequence<5>{}));
+
+        // output tensor
+        const auto c_k_n_hop_wop_grid_desc = transform_tensor_descriptor(
+            make_naive_tensor_descriptor_packed(make_tuple(N, K0, Ho, Wo, K1)),
+            make_tuple(make_merge_transform(make_tuple(K0, K1)),
+                       make_pass_through_transform(N),
+                       make_right_pad_transform(Ho, OutRightPadH),
+                       make_right_pad_transform(Wo, OutRightPadW)),
+            make_tuple(Sequence<1, 4>{}, Sequence<0>{}, Sequence<2>{}, Sequence<3>{}),
+            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}));
 
         // input2 tensor
         const auto in2_hip_wip_global_desc = transform_tensor_descriptor(
@@ -351,18 +595,8 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                   << d_e_ho_wo_grid_desc.GetLength(I1) << ", " << d_e_ho_wo_grid_desc.GetLength(I2)
                   << std::endl;
 
-        // output tensor
-        const auto c_k_n_hop_wop_grid_desc = transform_tensor_descriptor(
-            make_naive_tensor_descriptor_packed(make_tuple(N, K0, Ho, Wo, K1)),
-            make_tuple(make_merge_transform(make_tuple(K0, K1)),
-                       make_pass_through_transform(N),
-                       make_right_pad_transform(Ho, OutRightPadH),
-                       make_right_pad_transform(Wo, OutRightPadW)),
-            make_tuple(Sequence<1, 4>{}, Sequence<0>{}, Sequence<2>{}, Sequence<3>{}),
-            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}));
-
-        // output tensor
-        const auto d_k_ho_wo_grid_desc =
+        // output2 tensor
+        const auto e_k_ho_wo_grid_desc =
             transform_tensor_descriptor(make_naive_tensor_descriptor_packed(make_tuple(I1, Ho, Wo)),
                                         make_tuple(make_pass_through_transform(I1),
                                                    make_right_pad_transform(Ho, OutRightPadH),
@@ -423,17 +657,18 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
             GridwiseGemm::MakeBE0E1NH0H1H2W0W1W2E2GridDescriptor(b_e0_e1_n_ho_wo_e2_grid_desc);
         const auto c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc =
             GridwiseGemm::MakeCK0K1NH0H1H2W0W1W2GridDescriptor(c_k_n_hop_wop_grid_desc);
+
         const auto d_e_h0_h1_h2_w0_w1_w2_grid_desc =
             MakeDKH0H1H2W0W1W2GridDescriptor(d_e_ho_wo_grid_desc);
-        const auto d_k_h0_h1_h2_w0_w1_w2_grid_desc =
-            MakeDKH0H1H2W0W1W2GridDescriptor(d_k_ho_wo_grid_desc);
+        const auto e_k_h0_h1_h2_w0_w1_w2_grid_desc =
+            MakeDKH0H1H2W0W1W2GridDescriptor(e_k_ho_wo_grid_desc);
 
         using AGridDesc_E0_E1_K0_K1_E2 = decltype(a_e0_e1_k0_k1_e2_grid_desc);
         using BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2 =
             decltype(b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc);
         using CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2 = decltype(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
         using DGridDesc_E_H0_H1_H2_W0_W1_W2       = decltype(d_e_h0_h1_h2_w0_w1_w2_grid_desc);
-        using DGridDesc_K_H0_H1_H2_W0_W1_W2       = decltype(d_k_h0_h1_h2_w0_w1_w2_grid_desc);
+        using EGridDesc_K_H0_H1_H2_W0_W1_W2       = decltype(e_k_h0_h1_h2_w0_w1_w2_grid_desc);
 
         const auto grid_size = (K / KPerBlock) * (Hop / HoPerBlock) * (Wop / WoPerBlock) * N;
 
@@ -479,7 +714,7 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
         static_assert(c_blockid_to_k_n_h_w_block_cluster_adaptor.IsKnownAtCompileTime(), "");
 
         const auto kernel =
-            kernel_gemm_softmax_dlops_v3<GridwiseGemm,
+            kernel_conv_softmax_dlops_v3<GridwiseGemm,
                                          FloatAB,
                                          FloatAcc,
                                          FloatBias,
@@ -488,7 +723,7 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                                          remove_reference_t<BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2>,
                                          remove_reference_t<CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2>,
                                          remove_reference_t<DGridDesc_E_H0_H1_H2_W0_W1_W2>,
-                                         remove_reference_t<DGridDesc_K_H0_H1_H2_W0_W1_W2>,
+                                         remove_reference_t<EGridDesc_K_H0_H1_H2_W0_W1_W2>,
                                          remove_reference_t<CBlockIdToBlockClusterAdaptor_K_N_H_W>,
                                          has_main_e0_block_loop,
                                          activ_type>;

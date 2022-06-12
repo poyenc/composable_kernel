@@ -300,8 +300,6 @@ int main(int argc, char* argv[])
     Tensor<out_data_t> out2_host(in2_lengths_host);
     Tensor<out_data_t> out2_device(in2_lengths_host);
 
-
-
     ostream_HostTensorDescriptor(in.mDesc, std::cout << "in: ");
     ostream_HostTensorDescriptor(wei.mDesc, std::cout << "wei: ");
     ostream_HostTensorDescriptor(bias.mDesc, std::cout << "bias: ");
@@ -349,8 +347,8 @@ int main(int argc, char* argv[])
     }
 
     bias.GenerateTensorValue(GeneratorTensor_2<bias_data_t>{-5, 5}, num_thread);
-    //in2.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
-    //in3.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+    // in2.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+    // in3.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
     in2.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
     in3.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
 
@@ -402,28 +400,27 @@ int main(int argc, char* argv[])
 
     if(do_verification)
     {
-        host_direct_convolution_nchwc(
-            in,
-            wei,
-            bias,
-            out_host,
-            make_tuple(conv_stride_h, conv_stride_w),
-            make_tuple(conv_dilation_h, conv_dilation_w),
-            make_tuple(in_left_pad_h, in_left_pad_w),
-            make_tuple(in_right_pad_h, in_right_pad_w),
-            // ck::tensor_operation::element_wise::RequantReluRequant{0.3});
-            ck::tensor_operation::element_wise::RequantHardTanh{0.3});
+        host_direct_convolution_nchwc(in,
+                                      wei,
+                                      bias,
+                                      out_host,
+                                      make_tuple(conv_stride_h, conv_stride_w),
+                                      make_tuple(conv_dilation_h, conv_dilation_w),
+                                      make_tuple(in_left_pad_h, in_left_pad_w),
+                                      make_tuple(in_right_pad_h, in_right_pad_w),
+                                      ck::tensor_operation::element_wise::RequantHardTanh{0.3});
 
         check_error(out_host, out_device);
 
         if(do_log)
         {
-            //LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
-            //LogRangeAsType<float>(std::cout << "wei: ", wei.mData, ",") << std::endl;
-            //LogRangeAsType<float>(std::cout << "bias: ", bias.mData, ",") << std::endl;
-            //LogRangeAsType<float>(std::cout << "out_host  : ", out_host.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "wei: ", wei.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "bias: ", bias.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "out_host  : ", out_host.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
+            //<< std::endl;
         }
     }
 }
