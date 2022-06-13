@@ -26,11 +26,13 @@ void device_convolution_softmax_conv_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc
     const InRightPads& in_right_pads,
     const Tensor<TInWei>& in_n_c0_hi_wi_c1,
     const Tensor<TInWei>& wei_k_c0_y_x_c1,
+    const Tensor<TInWei>& wei2_k_c0_y_x_c1,
     const Tensor<TBias>& bias_k0_k1,
     Tensor<TOut>& out_n_k0_ho_wo_k1,
     const Tensor<TOut>& in2_n_k0_ho_wo_k1,
     const Tensor<TOut>& in3_n_k0_ho_wo_k1,
     Tensor<TOut>& out2_n_k0_ho_wo_k1,
+    Tensor<TOut>& out3_n_k0_ho_wo_k1,
     ck::index_t nrepeat)
 {
     using namespace ck;
@@ -61,6 +63,8 @@ void device_convolution_softmax_conv_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc
     DeviceMem in_n_c0_hi_wi_c1_device_buf(sizeof(TInWei) *
                                           in_n_c0_hi_wi_c1.mDesc.GetElementSpace());
     DeviceMem wei_k_c0_y_x_c1_device_buf(sizeof(TInWei) * wei_k_c0_y_x_c1.mDesc.GetElementSpace());
+    DeviceMem wei2_k_c0_y_x_c1_device_buf(sizeof(TInWei) *
+                                          wei2_k_c0_y_x_c1.mDesc.GetElementSpace());
     DeviceMem bias_k0_k1_device_buf(sizeof(TBias) * bias_k0_k1.mDesc.GetElementSpace());
     DeviceMem out_n_k0_ho_wo_k1_device_buf(sizeof(TOut) *
                                            out_n_k0_ho_wo_k1.mDesc.GetElementSpace());
@@ -71,9 +75,12 @@ void device_convolution_softmax_conv_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc
                                            in3_n_k0_ho_wo_k1.mDesc.GetElementSpace());
     DeviceMem out2_n_k0_ho_wo_k1_device_buf(sizeof(TOut) *
                                             out2_n_k0_ho_wo_k1.mDesc.GetElementSpace());
+    DeviceMem out3_n_k0_ho_wo_k1_device_buf(sizeof(TOut) *
+                                            out3_n_k0_ho_wo_k1.mDesc.GetElementSpace());
 
     in_n_c0_hi_wi_c1_device_buf.ToDevice(in_n_c0_hi_wi_c1.mData.data());
     wei_k_c0_y_x_c1_device_buf.ToDevice(wei_k_c0_y_x_c1.mData.data());
+    wei2_k_c0_y_x_c1_device_buf.ToDevice(wei2_k_c0_y_x_c1.mData.data());
     bias_k0_k1_device_buf.ToDevice(bias_k0_k1.mData.data());
 
     in2_n_k0_ho_wo_k1_device_buf.ToDevice(in2_n_k0_ho_wo_k1.mData.data());
@@ -105,82 +112,7 @@ void device_convolution_softmax_conv_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc
     constexpr index_t ABlockTransferSrcScalarPerVector_E2  = C1;
     constexpr index_t ABlockTransferDstScalarPerVector_E2  = C1;
     constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
-    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
-#elif 0
-    constexpr index_t BlockSize = 256;
-
-    constexpr index_t E1 = C0 * Y * X;
-    constexpr index_t E2 = C1;
-    constexpr index_t K2 = 4;
-
-    constexpr index_t E0PerBlock = 1;
-    constexpr index_t KPerBlock  = 16;
-    constexpr index_t HoPerBlock = 16;
-    constexpr index_t WoPerBlock = 64;
-    constexpr index_t E1PerBlock = 2;
-
-    constexpr index_t KPerThread  = 16;
-    constexpr index_t HoPerThread = 2;
-    constexpr index_t WoPerThread = 2;
-    constexpr index_t EPerThread  = 1;
-
-    using ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2   = Sequence<1, Y * X, 1, 1, C1>;
-    using ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2 = Sequence<1, C0, 1, KPerBlock, 1>;
-
-    constexpr index_t ABlockTransferSrcScalarPerVector_E2  = C1;
-    constexpr index_t ABlockTransferDstScalarPerVector_E2  = C1;
-    constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
-    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
-#elif 0
-    constexpr index_t BlockSize = 128;
-
-    constexpr index_t E0PerBlock = 1;
-    constexpr index_t KPerBlock  = 16;
-    constexpr index_t HoPerBlock = 8;
-    constexpr index_t WoPerBlock = 64;
-    constexpr index_t E1PerBlock = 2;
-
-    constexpr index_t E1 = C0 * Y * X;
-    constexpr index_t E2 = C1;
-    constexpr index_t K2 = 4;
-
-    constexpr index_t KPerThread  = 16;
-    constexpr index_t HoPerThread = 2;
-    constexpr index_t WoPerThread = 2;
-    constexpr index_t EPerThread  = 1;
-
-    using ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2   = Sequence<1, 7, 1, 1, C1>;
-    using ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2 = Sequence<1, 2, 1, KPerBlock, 1>;
-
-    constexpr index_t ABlockTransferSrcScalarPerVector_E2  = C1;
-    constexpr index_t ABlockTransferDstScalarPerVector_E2  = C1;
-    constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
-    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
-#elif 0
-    constexpr index_t BlockSize = 64;
-
-    constexpr index_t E1 = C0 * Y * X;
-    constexpr index_t E2 = C1;
-    constexpr index_t K2 = 4;
-
-    constexpr index_t E0PerBlock = 1;
-    constexpr index_t KPerBlock  = 16;
-    constexpr index_t HoPerBlock = 8;
-    constexpr index_t WoPerBlock = 32;
-    constexpr index_t E1PerBlock = 1;
-
-    constexpr index_t KPerThread  = 16;
-    constexpr index_t HoPerThread = 2;
-    constexpr index_t WoPerThread = 2;
-    constexpr index_t EPerThread  = 1;
-
-    using ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2   = Sequence<1, 16 * Y * X, 1, 1, C1>;
-    using ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2 = Sequence<1, 4, 1, KPerBlock, 1>;
-
-    constexpr index_t ABlockTransferSrcScalarPerVector_E2  = C1;
-    constexpr index_t ABlockTransferDstScalarPerVector_E2  = C1;
-    constexpr index_t BThreadTransferSrcScalarPerVector_E2 = C1;
-    constexpr index_t CThreadTransferDstScalarPerVector_K  = K1;
+    constexpr index_t CThreadTransferDstScalarPerVector_K  = I1;
 #endif
 
     const auto in_n_c0_hi_wi_c1_desc =
@@ -245,6 +177,8 @@ void device_convolution_softmax_conv_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc
                             static_cast<TOut*>(in2_n_k0_ho_wo_k1_device_buf.GetDeviceBuffer()),
                             static_cast<TOut*>(in3_n_k0_ho_wo_k1_device_buf.GetDeviceBuffer()),
                             static_cast<TOut*>(out2_n_k0_ho_wo_k1_device_buf.GetDeviceBuffer()),
+                            static_cast<TInWei*>(wei2_k_c0_y_x_c1_device_buf.GetDeviceBuffer()),
+                            static_cast<TOut*>(out3_n_k0_ho_wo_k1_device_buf.GetDeviceBuffer()),
                             nrepeat);
 
         {
@@ -258,4 +192,5 @@ void device_convolution_softmax_conv_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc
 
     out_n_k0_ho_wo_k1_device_buf.FromDevice(out_n_k0_ho_wo_k1.mData.data());
     out2_n_k0_ho_wo_k1_device_buf.FromDevice(out2_n_k0_ho_wo_k1.mData.data());
+    out3_n_k0_ho_wo_k1_device_buf.FromDevice(out3_n_k0_ho_wo_k1.mData.data());
 }

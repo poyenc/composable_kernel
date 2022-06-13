@@ -34,8 +34,11 @@ template <typename TIn,
           typename CElementwiseOp>
 void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                    const Tensor<TWei>& wei,
+                                   const Tensor<TWei>& wei2,
                                    const Tensor<TBias>& bias,
                                    Tensor<TOut>& out,
+                                   Tensor<TOut>& out2,
+                                   Tensor<TOut>& out3,
                                    const ConvStrides& conv_strides,
                                    const ConvDilations& conv_dilations,
                                    const InLeftPads& in_left_pads,
@@ -116,6 +119,42 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                out.mDesc.GetLengths()[0],
                                out.mDesc.GetLengths()[2],
                                out.mDesc.GetLengths()[3])(std::thread::hardware_concurrency());
+
+    auto f2_nchw = [&](auto n, auto k0, auto ho, auto wo, auto k1) {
+        float v     = 0;
+        const int k = k0 * out.mDesc.GetLengths()[4] + k1;
+
+        for(int c0 = 0; c0 < wei2.mDesc.GetLengths()[1]; ++c0)
+        {
+            for(int y = 0; y < wei2.mDesc.GetLengths()[2]; ++y)
+            {
+                int hi = ho * conv_strides[I0] + y * conv_dilations[I0] - in_left_pads[I0];
+                for(int x = 0; x < wei2.mDesc.GetLengths()[3]; ++x)
+                {
+                    int wi = wo * conv_strides[I1] + x * conv_dilations[I1] - in_left_pads[I1];
+                    if(hi >= 0 && hi < in.mDesc.GetLengths()[2] && wi >= 0 &&
+                       wi < in.mDesc.GetLengths()[3])
+                    {
+                        for(int c1 = 0; c1 < wei2.mDesc.GetLengths()[4]; ++c1)
+                        {
+                            v += static_cast<const double>(in(n, c0, hi, wi, c1)) *
+                                 static_cast<const double>(wei2(k, c0, y, x, c1));
+                        }
+                    }
+                }
+            }
+        }
+        // v += bias(k0, k1);
+        // out(n, k0, ho, wo, k1) = c_elementwise_op(v);
+        out3(n, k0, ho, wo, k1) = v;
+    };
+
+    make_ParallelTensorFunctor(f2_nchw,
+                               out3.mDesc.GetLengths()[0],
+                               out3.mDesc.GetLengths()[1],
+                               out3.mDesc.GetLengths()[2],
+                               out3.mDesc.GetLengths()[3],
+                               out3.mDesc.GetLengths()[4])(std::thread::hardware_concurrency());
 }
 
 int main(int argc, char* argv[])
@@ -300,6 +339,27 @@ int main(int argc, char* argv[])
     Tensor<out_data_t> out2_host(in2_lengths_host);
     Tensor<out_data_t> out2_device(in2_lengths_host);
 
+    std::vector<std::size_t> wei2_lengths_host(5);
+
+    wei2_lengths_host[0] = static_cast<std::size_t>(1);
+    wei2_lengths_host[1] = static_cast<std::size_t>(C0);
+    wei2_lengths_host[2] = static_cast<std::size_t>(Y);
+    wei2_lengths_host[3] = static_cast<std::size_t>(X);
+    wei2_lengths_host[4] = static_cast<std::size_t>(C1);
+
+    Tensor<in_data_t> wei2(wei2_lengths_host);
+
+    std::vector<std::size_t> out3_lengths_host(5);
+
+    out3_lengths_host[0] = static_cast<std::size_t>(N);
+    out3_lengths_host[1] = static_cast<std::size_t>(1);
+    out3_lengths_host[2] = static_cast<std::size_t>(Ho);
+    out3_lengths_host[3] = static_cast<std::size_t>(Wo);
+    out3_lengths_host[4] = static_cast<std::size_t>(1);
+
+    Tensor<out_data_t> out3_host(out3_lengths_host);
+    Tensor<out_data_t> out3_device(out3_lengths_host);
+
     ostream_HostTensorDescriptor(in.mDesc, std::cout << "in: ");
     ostream_HostTensorDescriptor(wei.mDesc, std::cout << "wei: ");
     ostream_HostTensorDescriptor(bias.mDesc, std::cout << "bias: ");
@@ -320,18 +380,22 @@ int main(int argc, char* argv[])
     case 1:
         in.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         break;
     case 2:
         in.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
     case 3:
         in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
         break;
     case 4:
         in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
     case 5:
         in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
@@ -389,11 +453,13 @@ int main(int argc, char* argv[])
                         tmp[I6],
                         in,
                         wei,
+                        wei2,
                         bias,
                         out_device,
                         in2,
                         in3,
                         out2_device,
+                        out3_device,
                         nrepeat);
     }
 #endif
@@ -402,8 +468,11 @@ int main(int argc, char* argv[])
     {
         host_direct_convolution_nchwc(in,
                                       wei,
+                                      wei2,
                                       bias,
                                       out_host,
+                                      out2_host,
+                                      out3_host,
                                       make_tuple(conv_stride_h, conv_stride_w),
                                       make_tuple(conv_dilation_h, conv_dilation_w),
                                       make_tuple(in_left_pad_h, in_left_pad_w),
@@ -411,16 +480,18 @@ int main(int argc, char* argv[])
                                       ck::tensor_operation::element_wise::RequantHardTanh{0.3});
 
         check_error(out_host, out_device);
+        check_error(out3_host, out3_device);
 
         if(do_log)
         {
             // LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
             // LogRangeAsType<float>(std::cout << "wei: ", wei.mData, ",") << std::endl;
             // LogRangeAsType<float>(std::cout << "bias: ", bias.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "out_host  : ", out_host.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") << std::endl;
-            // LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
-            //<< std::endl;
+            // LogRangeAsType<float>(std::cout << "out_host  : ", out_host.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") <<
+            // std::endl;
+            LogRangeAsType<float>(std::cout << "out3_device: ", out3_device.mData, ",")
+                << std::endl;
         }
     }
 }

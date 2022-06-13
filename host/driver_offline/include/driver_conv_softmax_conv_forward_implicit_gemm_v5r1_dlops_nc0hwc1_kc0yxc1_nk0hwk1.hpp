@@ -240,6 +240,8 @@ template <typename GridwiseGemm,
           typename DGridDesc_E_H0_H1_H2_W0_W1_W2,
           typename EGridDesc_K_H0_H1_H2_W0_W1_W2,
           typename CBlockIdToBlockClusterAdaptor_K_N_H_W,
+          typename A2GridDesc_E0_E1_K0_K1_E2,
+          typename C2GridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2,
           bool HasMainE0BlockLoop,
           ActivTypeEnum_t ActivType>
 __global__ void
@@ -253,17 +255,27 @@ __global__ void
                                      const FloatC* __restrict__ p_in1_grid,
                                      const FloatC* __restrict__ p_in2_grid,
                                      FloatC* __restrict__ p_out_grid,
+                                     const FloatAB* __restrict__ p_a2_grid,
+                                     FloatC* __restrict__ p_c2_grid,
                                      float scaleGemm)
 {
-    constexpr index_t shared_block_size =
-        GridwiseGemm::GetSharedMemoryNumberOfByte() / sizeof(FloatAB);
+
+    static constexpr auto I0 = Number<0>{};
+    static constexpr auto I1 = Number<1>{};
+    static constexpr auto I2 = Number<2>{};
+    static constexpr auto I3 = Number<3>{};
+
+    constexpr index_t shared_block_size = (GridwiseGemm::GetSharedMemoryNumberOfByte() +
+                                           GridwiseGemm::GetSharedMemoryNumberOfByteV2()) /
+                                          sizeof(FloatAB);
 
     __shared__ FloatAB p_shared_block[shared_block_size];
 
     constexpr auto a_e0_e1_k0_k1_e2_grid_desc = AGridDesc_E0_E1_K0_K1_E2{};
     constexpr auto b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc =
         BGridDesc_E0_E1_N_H0_H1_H2_W0_W1_W2_E2{};
-    constexpr auto c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc = CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2{};
+    constexpr auto c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc  = CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2{};
+    constexpr auto c2_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc = C2GridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2{};
 
     constexpr auto c_blockid_to_k_n_h_w_block_cluster_adaptor =
         CBlockIdToBlockClusterAdaptor_K_N_H_W{};
@@ -285,22 +297,44 @@ __global__ void
 
     const auto a_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_a_grid, a_e0_e1_k0_k1_e2_grid_desc.GetElementSpaceSize());
+
     const auto b_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_b_grid, b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc.GetElementSpaceSize());
 
     const auto c_thread_mtx_index = GridwiseGemm::GetCThreadIndex();
 
+    constexpr auto HoPerThread = c_k1_n_h2_w2_thread_gemm_desc.GetLength(I2);
+    constexpr auto WoPerThread = c_k1_n_h2_w2_thread_gemm_desc.GetLength(I3);
+
+    constexpr auto a2_e0_e1_k0_k1_e2_grid_desc    = A2GridDesc_E0_E1_K0_K1_E2{};
+    constexpr auto c2_k1_n_h2_w2_thread_gemm_desc = make_naive_tensor_descriptor_packed(
+        make_tuple(I1, I1, Number<HoPerThread>{}, Number<WoPerThread>{}));
+
+    const auto a2_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_a2_grid, a2_e0_e1_k0_k1_e2_grid_desc.GetElementSpaceSize());
+
+    // register allocation for output
+    StaticBuffer<AddressSpaceEnum_t::Vgpr,
+                 FloatAcc,
+                 c2_k1_n_h2_w2_thread_gemm_desc.GetElementSpaceSize(),
+                 true>
+        c2_thread_buf;
+
     // GemmOp
-    GridwiseGemm::GemmOpHasE1Loop(a_global_buf,
-                                  b_global_buf,
-                                  c_thread_buf,
-                                  p_shared_block,
-                                  c_k_n_h_w_block_cluster_idx,
-                                  c_thread_mtx_index,
-                                  a_e0_e1_k0_k1_e2_grid_desc,
-                                  b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc,
-                                  c_k1_n_h2_w2_thread_gemm_desc,
-                                  integral_constant<bool, HasMainE0BlockLoop>{});
+    GridwiseGemm::GemmOpHasE1LoopV2(a_global_buf,
+                                    a2_global_buf,
+                                    b_global_buf,
+                                    c_thread_buf,
+                                    c2_thread_buf,
+                                    p_shared_block,
+                                    c_k_n_h_w_block_cluster_idx,
+                                    c_thread_mtx_index,
+                                    a_e0_e1_k0_k1_e2_grid_desc,
+                                    a2_e0_e1_k0_k1_e2_grid_desc,
+                                    b_e0_e1_n_h0_h1_h2_w0_w1_w2_e2_grid_desc,
+                                    c_k1_n_h2_w2_thread_gemm_desc,
+                                    c2_k1_n_h2_w2_thread_gemm_desc,
+                                    integral_constant<bool, HasMainE0BlockLoop>{});
 
     const auto bias_k0_k1_grid_desc =
         GridwiseGemm::MakeBiasK0K1GridDescriptor(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
@@ -322,11 +356,23 @@ __global__ void
     auto c_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
         p_c_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
 
-    GridwiseGemm::WriteOut(c_thread_buf,
-                           c_global_buf,
+    auto c2_global_buf = make_dynamic_buffer<AddressSpaceEnum_t::Global>(
+        p_c2_grid, c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc.GetElementSpaceSize());
+
+    // GridwiseGemm::WriteOut(c_thread_buf,
+    // c_global_buf,
+    // c_k_n_h_w_block_cluster_idx,
+    // c_thread_mtx_index,
+    // c_k1_n_h2_w2_thread_gemm_desc,
+    // c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
+    // ck::tensor_operation::element_wise::PassThrough{});
+
+    GridwiseGemm::WriteOut(c2_thread_buf,
+                           c2_global_buf,
                            c_k_n_h_w_block_cluster_idx,
                            c_thread_mtx_index,
-                           c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
+                           c2_k1_n_h2_w2_thread_gemm_desc,
+                           c2_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc,
                            ck::tensor_operation::element_wise::PassThrough{});
 
     constexpr auto d_e_h0_h1_h2_w0_w1_w2_grid_desc = DGridDesc_E_H0_H1_H2_W0_W1_W2{};
@@ -369,7 +415,7 @@ template <ck::index_t BlockSize,
           ck::index_t HoPerThread,
           ck::index_t WoPerThread,
           ck::index_t EPerThread,
-          typename ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2,
+          typename ABlockTransferBlockSliceLengths_E0_E1_K0_K1_E2,
           typename ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2,
           ck::index_t ABlockTransferSrcScalarPerVector_E2,
           ck::index_t ABlockTransferDstScalarPerVector_E2,
@@ -435,6 +481,8 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                        const FloatC* __restrict__ p_in2_grid,
                        const FloatC* __restrict__ p_in3_grid,
                        FloatC* __restrict__ p_out2_grid,
+                       const FloatAB* __restrict__ p_a2_grid,
+                       FloatC* __restrict__ p_c2_grid,
                        const int nrepeat) const
     {
         const auto N  = in_n_c0_hi_wi_c1_global_desc.GetLength(I0);
@@ -604,6 +652,33 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                                         make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}),
                                         make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}));
 
+        // weight2 tensor
+        const auto a2_e_k_e2_grid_desc = transform_tensor_descriptor(
+            make_naive_tensor_descriptor_packed(make_tuple(I1, C0 * Y * X, E2)),
+            make_tuple(make_pass_through_transform(I1),
+                       make_pass_through_transform(C0 * Y * X),
+                       make_pass_through_transform(E2)),
+            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}),
+            make_tuple(Sequence<1>{}, Sequence<0>{}, Sequence<2>{}));
+
+        const auto a2_e0_e1_k_e2_grid_desc =
+            transform_tensor_descriptor(a2_e_k_e2_grid_desc,
+                                        make_tuple(make_unmerge_transform(make_tuple(E0, E1)),
+                                                   make_pass_through_transform(I1),
+                                                   make_pass_through_transform(E2)),
+                                        make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}),
+                                        make_tuple(Sequence<0, 1>{}, Sequence<2>{}, Sequence<3>{}));
+
+        // output3 tensor
+        const auto c2_k_n_hop_wop_grid_desc = transform_tensor_descriptor(
+            make_naive_tensor_descriptor_packed(make_tuple(I1, N, Ho, Wo)),
+            make_tuple(make_pass_through_transform(I1),
+                       make_pass_through_transform(N),
+                       make_right_pad_transform(Ho, OutRightPadH),
+                       make_right_pad_transform(Wo, OutRightPadW)),
+            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}),
+            make_tuple(Sequence<0>{}, Sequence<1>{}, Sequence<2>{}, Sequence<3>{}));
+
         std::cerr << "Hop = " << Hop << " Wop = " << Wop << std::endl;
 
         if(!((K % KPerBlock) == 0 && (Hop % HoPerBlock) == 0 && (Wop % WoPerBlock) == 0 &&
@@ -634,7 +709,7 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
             HoPerThread,
             WoPerThread,
             EPerThread,
-            ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2,
+            ABlockTransferBlockSliceLengths_E0_E1_K0_K1_E2,
             ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2,
             Sequence<2, 3, 0, 1, 4>,
             Sequence<0, 1, 2, 3, 4>,
@@ -658,6 +733,11 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
         const auto c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc =
             GridwiseGemm::MakeCK0K1NH0H1H2W0W1W2GridDescriptor(c_k_n_hop_wop_grid_desc);
 
+        const auto a2_e0_e1_k0_k1_e2_grid_desc =
+            GridwiseGemm::MakeAE0E1K0K1E2GridDescriptor(a2_e0_e1_k_e2_grid_desc);
+        const auto c2_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc =
+            GridwiseGemm::MakeCK0K1NH0H1H2W0W1W2GridDescriptor(c2_k_n_hop_wop_grid_desc);
+
         const auto d_e_h0_h1_h2_w0_w1_w2_grid_desc =
             MakeDKH0H1H2W0W1W2GridDescriptor(d_e_ho_wo_grid_desc);
         const auto e_k_h0_h1_h2_w0_w1_w2_grid_desc =
@@ -669,6 +749,10 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
         using CGridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2 = decltype(c_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
         using DGridDesc_E_H0_H1_H2_W0_W1_W2       = decltype(d_e_h0_h1_h2_w0_w1_w2_grid_desc);
         using EGridDesc_K_H0_H1_H2_W0_W1_W2       = decltype(e_k_h0_h1_h2_w0_w1_w2_grid_desc);
+
+        using A2GridDesc_E0_E1_K0_K1_E2 = decltype(a2_e0_e1_k0_k1_e2_grid_desc);
+        using C2GridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2 =
+            decltype(c2_k0_k1_n_h0_h1_h2_w0_w1_w2_grid_desc);
 
         const auto grid_size = (K / KPerBlock) * (Hop / HoPerBlock) * (Wop / WoPerBlock) * N;
 
@@ -725,6 +809,8 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                                          remove_reference_t<DGridDesc_E_H0_H1_H2_W0_W1_W2>,
                                          remove_reference_t<EGridDesc_K_H0_H1_H2_W0_W1_W2>,
                                          remove_reference_t<CBlockIdToBlockClusterAdaptor_K_N_H_W>,
+                                         remove_reference_t<A2GridDesc_E0_E1_K0_K1_E2>,
+                                         remove_reference_t<C2GridDesc_K0_K1_N_H0_H1_H2_W0_W1_W2>,
                                          has_main_e0_block_loop,
                                          activ_type>;
 
@@ -740,6 +826,8 @@ struct DriverDynamicConvolutionSoftmaxConvForwardImplicitGemmDlops_v5r1_nc0hwc1_
                                           p_in2_grid,
                                           p_in3_grid,
                                           p_out2_grid,
+                                          p_a2_grid,
+                                          p_c2_grid,
                                           0.3);
 #endif
         return ave_time;
