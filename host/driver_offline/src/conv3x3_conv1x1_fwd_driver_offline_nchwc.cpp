@@ -37,8 +37,7 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                    const ConvStrides& conv_strides,
                                    const ConvDilations& conv_dilations,
                                    const InLeftPads& in_left_pads,
-                                   const InRightPads&,
-                                   const ck::ActivTypeEnum_t activ_type)
+                                   const InRightPads& in_right_pads)
 {
     using namespace ck;
 
@@ -70,7 +69,7 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
             }
         }
         v += bias(k0, k1);
-        out(n, k0, ho, wo, k1) = activ(v, activ_type);
+        out(n, k0, ho, wo, k1) = v;
     };
 
     make_ParallelTensorFunctor(f_nchw,
@@ -97,16 +96,12 @@ int main(int argc, char* argv[])
 #if USE_DYNAMIC_MODE
     // dynamic mode
     if(argc != 23)
-        v, activ_type
-        {
-            printf("arg1 to 5: algo, do_verification, init_method, do_log, nrepeat\n");
-            printf(
-                "rest: N, K0, K1, C0, C1, Y, X, Hi, Wi, Sy, Sx, Dy, Dx, LeftPy, LeftPx, RightPy, "
-                "RightPx\n");
-            exit(1);
-        }
-
-    constexpr ck::ActivTypeEnum_t activ_type = ActivTypeEnum_t::LeakyRelu;
+    {
+        printf("arg1 to 5: algo, do_verification, init_method, do_log, nrepeat\n");
+        printf("rest: N, K0, K1, C0, C1, Y, X, Hi, Wi, Sy, Sx, Dy, Dx, LeftPy, LeftPx, RightPy, "
+               "RightPx\n");
+        exit(1);
+    }
 
     const ConvForwardAlgo algo = static_cast<ConvForwardAlgo>(std::stoi(argv[1]));
     const bool do_verification = std::stoi(argv[2]);
@@ -174,7 +169,6 @@ int main(int argc, char* argv[])
     constexpr auto in_right_pad_h = Number<CONV_IN_RIGHT_PAD_H>{};
     constexpr auto in_right_pad_w = Number<CONV_IN_RIGHT_PAD_W>{};
 
-    constexpr ck::ActivTypeEnum_t activ_type = ActivTypeEnum_t::CONV_ACTIV;
 #else
     constexpr auto N  = Number<1>{};
     constexpr auto Hi = Number<270>{};
@@ -196,7 +190,6 @@ int main(int argc, char* argv[])
     constexpr auto in_right_pad_h = I1;
     constexpr auto in_right_pad_w = I1;
 
-    constexpr ck::ActivTypeEnum_t activ_type = ActivTypeEnum_t::LeakyRelu;
 #endif
 
     constexpr auto YEff = (Y - I1) * conv_dilation_h + I1;
@@ -220,14 +213,14 @@ int main(int argc, char* argv[])
     using out_data_t = int8_t;
 #endif
 
-    std::vector<std::size_t> in_lengths_host(5), wei1_lengths_host(5), out_lengths_host(5),
-        bias_lengths_host(2), wei2_lengths_host(5);
+    std::vector<std::size_t> in1_lengths_host(5), wei1_lengths_host(5), out1_lengths_host(5),
+        bias1_lengths_host(2);
 
-    in_lengths_host[0] = static_cast<std::size_t>(N);
-    in_lengths_host[1] = static_cast<std::size_t>(C0);
-    in_lengths_host[2] = static_cast<std::size_t>(Hi);
-    in_lengths_host[3] = static_cast<std::size_t>(Wi);
-    in_lengths_host[4] = static_cast<std::size_t>(C1);
+    in1_lengths_host[0] = static_cast<std::size_t>(N);
+    in1_lengths_host[1] = static_cast<std::size_t>(C0);
+    in1_lengths_host[2] = static_cast<std::size_t>(Hi);
+    in1_lengths_host[3] = static_cast<std::size_t>(Wi);
+    in1_lengths_host[4] = static_cast<std::size_t>(C1);
 
     wei1_lengths_host[0] = static_cast<std::size_t>(K0 * K1);
     wei1_lengths_host[1] = static_cast<std::size_t>(C0);
@@ -235,34 +228,57 @@ int main(int argc, char* argv[])
     wei1_lengths_host[3] = static_cast<std::size_t>(X);
     wei1_lengths_host[4] = static_cast<std::size_t>(C1);
 
+    out1_lengths_host[0] = static_cast<std::size_t>(N);
+    out1_lengths_host[1] = static_cast<std::size_t>(K0);
+    out1_lengths_host[2] = static_cast<std::size_t>(Ho);
+    out1_lengths_host[3] = static_cast<std::size_t>(Wo);
+    out1_lengths_host[4] = static_cast<std::size_t>(K1);
+
+    bias1_lengths_host[0] = static_cast<std::size_t>(K0);
+    bias1_lengths_host[1] = static_cast<std::size_t>(K1);
+
+    std::vector<std::size_t> in2_lengths_host(5), wei2_lengths_host(5), out2_lengths_host(5),
+        bias2_lengths_host(2);
+
+    in2_lengths_host[0] = static_cast<std::size_t>(N);
+    in2_lengths_host[1] = static_cast<std::size_t>(C0);
+    in2_lengths_host[2] = static_cast<std::size_t>(Ho);
+    in2_lengths_host[3] = static_cast<std::size_t>(Wo);
+    in2_lengths_host[4] = static_cast<std::size_t>(C1);
+
     wei2_lengths_host[0] = static_cast<std::size_t>(K0 * K1);
     wei2_lengths_host[1] = static_cast<std::size_t>(K0);
-    wei2_lengths_host[2] = static_cast<std::size_t>(1);
-    wei2_lengths_host[3] = static_cast<std::size_t>(1);
+    wei2_lengths_host[2] = static_cast<std::size_t>(I1);
+    wei2_lengths_host[3] = static_cast<std::size_t>(I1);
     wei2_lengths_host[4] = static_cast<std::size_t>(K1);
 
-    out_lengths_host[0] = static_cast<std::size_t>(N);
-    out_lengths_host[1] = static_cast<std::size_t>(K0);
-    out_lengths_host[2] = static_cast<std::size_t>(Ho);
-    out_lengths_host[3] = static_cast<std::size_t>(Wo);
-    out_lengths_host[4] = static_cast<std::size_t>(K1);
+    out2_lengths_host[0] = static_cast<std::size_t>(N);
+    out2_lengths_host[1] = static_cast<std::size_t>(K0);
+    out2_lengths_host[2] = static_cast<std::size_t>(Ho);
+    out2_lengths_host[3] = static_cast<std::size_t>(Wo);
+    out2_lengths_host[4] = static_cast<std::size_t>(K1);
 
-    bias_lengths_host[0] = static_cast<std::size_t>(K0);
-    bias_lengths_host[1] = static_cast<std::size_t>(K1);
+    bias2_lengths_host[0] = static_cast<std::size_t>(K0);
+    bias2_lengths_host[1] = static_cast<std::size_t>(K1);
 
-    Tensor<in_data_t> in(in_lengths_host);
+    Tensor<in_data_t> in1(in1_lengths_host);
     Tensor<in_data_t> wei1(wei1_lengths_host);
-    Tensor<in_data_t> wei2(wei2_lengths_host);
-    Tensor<out_data_t> bias(bias_lengths_host);
-    Tensor<out_data_t> out1_host(out_lengths_host);
-    Tensor<out_data_t> out2_host(out_lengths_host);
-    Tensor<out_data_t> out_device(out_lengths_host);
+    Tensor<out_data_t> bias1(bias1_lengths_host);
+    Tensor<out_data_t> out1_host(out1_lengths_host);
+    Tensor<out_data_t> out1_device(out1_lengths_host);
 
-    ostream_HostTensorDescriptor(in.mDesc, std::cout << "in: ");
+    Tensor<in_data_t> wei2(wei2_lengths_host);
+    Tensor<out_data_t> bias2(bias2_lengths_host);
+    Tensor<out_data_t> out2_host(out2_lengths_host);
+    Tensor<out_data_t> out2_device(out2_lengths_host);
+
+    ostream_HostTensorDescriptor(in1.mDesc, std::cout << "in1: ");
     ostream_HostTensorDescriptor(wei1.mDesc, std::cout << "wei1: ");
-    ostream_HostTensorDescriptor(wei2.mDesc, std::cout << "wei2: ");
-    ostream_HostTensorDescriptor(bias.mDesc, std::cout << "bias: ");
+    ostream_HostTensorDescriptor(bias1.mDesc, std::cout << "bias1: ");
     ostream_HostTensorDescriptor(out1_host.mDesc, std::cout << "out1: ");
+
+    ostream_HostTensorDescriptor(wei2.mDesc, std::cout << "wei2: ");
+    ostream_HostTensorDescriptor(bias2.mDesc, std::cout << "bias2: ");
     ostream_HostTensorDescriptor(out2_host.mDesc, std::cout << "out2: ");
 
     print_array("InLeftPads", make_tuple(in_left_pad_h, in_left_pad_w));
@@ -277,30 +293,33 @@ int main(int argc, char* argv[])
     case 0:
         // no initialization
         break;
-    // case 1:
-    // in.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
-    // wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
-    // break;
-    // case 2:
-    // in.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
-    // wei.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
-    // break;
-    // case 3:
-    // in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
-    // wei.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
-    // break;
+    case 1:
+        in1.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        wei1.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        break;
+    case 2:
+        in1.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        wei1.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        break;
+    case 3:
+        in1.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        wei1.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        wei2.GenerateTensorValue(GeneratorTensor_1<in_data_t>{}, num_thread);
+        break;
     case 4:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
+        in1.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei1.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         wei2.GenerateTensorValue(GeneratorTensor_2<in_data_t>{-5, 5}, num_thread);
         break;
     case 5:
-        in.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
+        in1.GenerateTensorValue(GeneratorTensor_3<in_data_t>{0.0, 1.0}, num_thread);
         wei1.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
         wei2.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
         break;
     default:
-        in.GenerateTensorValue(GeneratorTensor_2<in_data_t>{1, 5}, num_thread);
+        in1.GenerateTensorValue(GeneratorTensor_2<in_data_t>{1, 5}, num_thread);
 
         auto gen_wei = [](auto... is) {
             return GeneratorTensor_2<in_data_t>{1, 5}(is...) * GeneratorTensor_Checkboard{}(is...);
@@ -309,87 +328,83 @@ int main(int argc, char* argv[])
         wei2.GenerateTensorValue(gen_wei, num_thread);
     }
 
-    bias.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
+    bias1.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
+    bias2.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
 
-    auto f_make_for_device_nchwc = [&]() {
-        const auto in_lengths_dev     = make_tuple(N, C0, Hi, Wi, C1);
-        const auto wei1_lengths_dev   = make_tuple(K0 * K1, C0, Y, X, C1);
-        const auto wei2_lengths_dev   = make_tuple(K0 * K1, K0, 1, 1, K1);
-        const auto out_lengths_dev    = make_tuple(N, K0, Ho, Wo, K1);
-        const auto conv_strides_dev   = make_tuple(conv_stride_h, conv_stride_w);
-        const auto conv_dilations_dev = make_tuple(conv_dilation_h, conv_dilation_w);
-        const auto in_left_pads_dev   = make_tuple(in_left_pad_h, in_left_pad_w);
-        const auto in_right_pads_dev  = make_tuple(in_right_pad_h, in_right_pad_w);
-
-        return make_tuple(in_lengths_dev,
-                          wei1_lengths_dev,
-                          wei2_lengths_dev,
-                          out_lengths_dev,
-                          conv_strides_dev,
-                          conv_dilations_dev,
-                          in_left_pads_dev,
-                          in_right_pads_dev);
-    };
+    const auto in1_lengths_dev    = make_tuple(N, C0, Hi, Wi, C1);
+    const auto wei1_lengths_dev   = make_tuple(K0 * K1, C0, Y, X, C1);
+    const auto out1_lengths_dev   = make_tuple(N, K0, Ho, Wo, K1);
+    const auto in2_lengths_dev    = make_tuple(N, K0, Ho, Wo, K1);
+    const auto wei2_lengths_dev   = make_tuple(K0 * K1, K0, I1, I1, K1);
+    const auto out2_lengths_dev   = make_tuple(N, K0, Ho, Wo, K1);
+    const auto conv_strides_dev   = make_tuple(conv_stride_h, conv_stride_w);
+    const auto conv_dilations_dev = make_tuple(conv_dilation_h, conv_dilation_w);
+    const auto in_left_pads_dev   = make_tuple(in_left_pad_h, in_left_pad_w);
+    const auto in_right_pads_dev  = make_tuple(in_right_pad_h, in_right_pad_w);
 
 #if USE_CONV_FWD_V5R1_NCHWC
     if(algo == ConvForwardAlgo::V5R1NCHWC)
     {
-        const auto tmp = f_make_for_device_nchwc();
-
         device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_kc0yxc1_nk0hwk1<
             in_data_t,
             acc_data_t,
-            out_data_t,
-            activ_type>(tmp[I0],
-                        tmp[I1],
-                        tmp[I2],
-                        tmp[I3],
-                        tmp[I4],
-                        tmp[I5],
-                        tmp[I6],
-                        tmp[I7],
-                        in,
+            out_data_t>(in1_lengths_dev,
+                        wei1_lengths_dev,
+                        out1_lengths_dev,
+                        in2_lengths_dev,
+                        wei2_lengths_dev,
+                        out2_lengths_dev,
+                        conv_strides_dev,
+                        conv_dilations_dev,
+                        in_left_pads_dev,
+                        in_right_pads_dev,
+                        in1,
                         wei1,
+                        bias1,
+                        out1_device,
                         wei2,
-                        bias,
-                        out_device,
+                        bias2,
+                        out2_device,
                         nrepeat);
     }
 #endif
 
     if(do_verification)
     {
-        host_direct_convolution_nchwc(in,
+        host_direct_convolution_nchwc(in1,
                                       wei1,
-                                      bias,
+                                      bias1,
                                       out1_host,
                                       make_tuple(conv_stride_h, conv_stride_w),
                                       make_tuple(conv_dilation_h, conv_dilation_w),
                                       make_tuple(in_left_pad_h, in_left_pad_w),
-                                      make_tuple(in_right_pad_h, in_right_pad_w),
-                                      activ_type);
+                                      make_tuple(in_right_pad_h, in_right_pad_w));
 
         host_direct_convolution_nchwc(out1_host,
                                       wei2,
-                                      bias,
+                                      bias2,
                                       out2_host,
-                                      make_tuple(conv_stride_h, conv_stride_w),
-                                      make_tuple(conv_dilation_h, conv_dilation_w),
-                                      make_tuple(in_left_pad_h, in_left_pad_w),
-                                      make_tuple(in_right_pad_h, in_right_pad_w),
-                                      activ_type);
+                                      make_tuple(I0, I0),
+                                      make_tuple(I1, I1),
+                                      make_tuple(I0, I0),
+                                      make_tuple(I0, I0));
 
-        check_error(out2_host, out_device);
+        check_error(out2_host, out2_device);
 
         if(do_log)
         {
-            LogRangeAsType<float>(std::cout << "in : ", in.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "in1 : ", in1.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "wei1: ", wei1.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "wei2: ", wei2.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "bias: ", bias.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "bias1: ", bias1.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out1_host  : ", out1_host.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "out1_device: ", out1_device.mData, ",")
+                << std::endl;
+
+            LogRangeAsType<float>(std::cout << "wei2: ", wei2.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "bias2: ", bias2.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out2_host  : ", out2_host.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "out_device: ", out_device.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
+                << std::endl;
         }
     }
 }
