@@ -454,8 +454,8 @@ struct DriverDynamicConv3x3Conv1x1BiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1
         const auto GemmArg2 =
             MakeGridwiseGemm<FloatAB, FloatAcc, FloatC, GridGemmTuningParameters2>(conv2_desc);
 
-        conv1_desc.printConvDesc();
-        GridGemmTuningParameters1{}.printTuningParameters();
+        // conv1_desc.printConvDesc();
+        // GridGemmTuningParameters1{}.printTuningParameters();
 
         float ave_time = 0;
         static_assert(GemmArg1.a_e0_e1_k0_k1_e2_grid_desc.IsKnownAtCompileTime(), "");
@@ -473,10 +473,10 @@ struct DriverDynamicConv3x3Conv1x1BiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1
         // using CBlockIdToBlockClusterAdaptor_K_N_H_W =
         // decltype(GemmArg1.c_blockid_to_k_n_h_w_block_cluster_adaptor);
 
-        const auto kernel =
+        const auto kernel1 =
             kernel_conv_bias_activ_dlops_v4<decltype(GemmArg1), FloatAB, FloatAcc, FloatC, FloatC>;
 
-        ave_time = launch_and_time_kernel(kernel,
+        ave_time = launch_and_time_kernel(kernel1,
                                           nrepeat,
                                           dim3(GemmArg1.grid_size),
                                           dim3(GemmArg1.block_size),
@@ -487,6 +487,21 @@ struct DriverDynamicConv3x3Conv1x1BiasActivForwardImplicitGemmDlops_v5r1_nc0hwc1
                                           p_bias1_grid,
                                           p_c1_grid,
                                           0.3);
+
+        const auto kernel2 =
+            kernel_conv_bias_activ_dlops_v4<decltype(GemmArg2), FloatAB, FloatAcc, FloatC, FloatC>;
+
+        ave_time += launch_and_time_kernel(kernel2,
+                                           nrepeat,
+                                           dim3(GemmArg2.grid_size),
+                                           dim3(GemmArg2.block_size),
+                                           0,
+                                           GemmArg2,
+                                           p_a2_grid,
+                                           p_c1_grid,
+                                           p_bias2_grid,
+                                           p_c2_grid,
+                                           0.3);
 
         return ave_time;
     }

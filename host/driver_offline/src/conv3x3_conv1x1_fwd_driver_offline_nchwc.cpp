@@ -37,7 +37,7 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                                    const ConvStrides& conv_strides,
                                    const ConvDilations& conv_dilations,
                                    const InLeftPads& in_left_pads,
-                                   const InRightPads& in_right_pads)
+                                   const InRightPads&)
 {
     using namespace ck;
 
@@ -382,17 +382,17 @@ int main(int argc, char* argv[])
                                       make_tuple(in_left_pad_h, in_left_pad_w),
                                       make_tuple(in_right_pad_h, in_right_pad_w));
 
-        // host_direct_convolution_nchwc(out1_host,
-        // wei2,
-        // bias2,
-        // out2_host,
-        // make_tuple(I1, I1),
-        // make_tuple(I1, I1),
-        // make_tuple(I0, I0),
-        // make_tuple(I0, I0));
+        host_direct_convolution_nchwc(out1_host,
+                                      wei2,
+                                      bias2,
+                                      out2_host,
+                                      make_tuple(I1, I1),
+                                      make_tuple(I1, I1),
+                                      make_tuple(I0, I0),
+                                      make_tuple(I0, I0));
 
         check_error(out1_host, out1_device);
-        // check_error(out2_host, out2_device);
+        check_error(out2_host, out2_device);
 
         if(do_log)
         {
@@ -405,9 +405,9 @@ int main(int argc, char* argv[])
 
             // LogRangeAsType<float>(std::cout << "wei2: ", wei2.mData, ",") << std::endl;
             // LogRangeAsType<float>(std::cout << "bias2: ", bias2.mData, ",") << std::endl;
-            // LogRangeAsType<float>(std::cout << "out2_host  : ", out2_host.mData, ",") <<
-            // std::endl; LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
-            //<< std::endl;
+            LogRangeAsType<float>(std::cout << "out2_host  : ", out2_host.mData, ",") << std::endl;
+            LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
+                << std::endl;
         }
     }
 }
