@@ -64,9 +64,9 @@ struct BlockwiseTensorSliceTransfer_v4r1
                           nDim == SrcDimAccessOrder::Size() && nDim == DstDimAccessOrder::Size(),
                       "wrong! nDim not consistent");
 
-        static_assert(
-            is_same<BlockSliceLengths, decltype(thread_slice_lengths * ThreadClusterLengths{})>{},
-            "wrong! threads should be mapped to cover entire slicing window");
+        static_assert(is_same<remove_cv_t<BlockSliceLengths>,
+                              decltype(thread_slice_lengths * ThreadClusterLengths{})>{},
+                      "wrong! threads should be mapped to cover entire slicing window");
 
         static_assert(BlockSize >= thread_cluster_desc_.GetElementSize(),
                       "wrong! BlockSize too small");

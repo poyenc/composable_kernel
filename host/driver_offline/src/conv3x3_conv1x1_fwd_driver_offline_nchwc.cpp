@@ -68,7 +68,7 @@ void host_direct_convolution_nchwc(const Tensor<TIn>& in,
                 }
             }
         }
-        v += bias(k0, k1);
+        // v += bias(k0, k1);
         out(n, k0, ho, wo, k1) = v;
     };
 
@@ -331,12 +331,14 @@ int main(int argc, char* argv[])
     bias1.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
     bias2.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
 
-    const auto in1_lengths_dev    = make_tuple(N, C0, Hi, Wi, C1);
-    const auto wei1_lengths_dev   = make_tuple(K0 * K1, C0, Y, X, C1);
-    const auto out1_lengths_dev   = make_tuple(N, K0, Ho, Wo, K1);
-    const auto in2_lengths_dev    = make_tuple(N, K0, Ho, Wo, K1);
-    const auto wei2_lengths_dev   = make_tuple(K0 * K1, K0, I1, I1, K1);
-    const auto out2_lengths_dev   = make_tuple(N, K0, Ho, Wo, K1);
+    const auto in1_lengths_dev  = make_tuple(N, C0, Hi, Wi, C1);
+    const auto wei1_lengths_dev = make_tuple(K0 * K1, C0, Y, X, C1);
+    const auto out1_lengths_dev = make_tuple(N, K0, Ho, Wo, K1);
+
+    const auto in2_lengths_dev  = make_tuple(N, K0, Ho, Wo, K1);
+    const auto wei2_lengths_dev = make_tuple(K0 * K1, K0, I1, I1, K1);
+    const auto out2_lengths_dev = make_tuple(N, K0, Ho, Wo, K1);
+
     const auto conv_strides_dev   = make_tuple(conv_stride_h, conv_stride_w);
     const auto conv_dilations_dev = make_tuple(conv_dilation_h, conv_dilation_w);
     const auto in_left_pads_dev   = make_tuple(in_left_pad_h, in_left_pad_w);
@@ -380,31 +382,32 @@ int main(int argc, char* argv[])
                                       make_tuple(in_left_pad_h, in_left_pad_w),
                                       make_tuple(in_right_pad_h, in_right_pad_w));
 
-        host_direct_convolution_nchwc(out1_host,
-                                      wei2,
-                                      bias2,
-                                      out2_host,
-                                      make_tuple(I0, I0),
-                                      make_tuple(I1, I1),
-                                      make_tuple(I0, I0),
-                                      make_tuple(I0, I0));
+        // host_direct_convolution_nchwc(out1_host,
+        // wei2,
+        // bias2,
+        // out2_host,
+        // make_tuple(I1, I1),
+        // make_tuple(I1, I1),
+        // make_tuple(I0, I0),
+        // make_tuple(I0, I0));
 
-        check_error(out2_host, out2_device);
+        check_error(out1_host, out1_device);
+        // check_error(out2_host, out2_device);
 
         if(do_log)
         {
-            LogRangeAsType<float>(std::cout << "in1 : ", in1.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "wei1: ", wei1.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "bias1: ", bias1.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "in1 : ", in1.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "wei1: ", wei1.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "bias1: ", bias1.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out1_host  : ", out1_host.mData, ",") << std::endl;
             LogRangeAsType<float>(std::cout << "out1_device: ", out1_device.mData, ",")
                 << std::endl;
 
-            LogRangeAsType<float>(std::cout << "wei2: ", wei2.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "bias2: ", bias2.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "out2_host  : ", out2_host.mData, ",") << std::endl;
-            LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
-                << std::endl;
+            // LogRangeAsType<float>(std::cout << "wei2: ", wei2.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "bias2: ", bias2.mData, ",") << std::endl;
+            // LogRangeAsType<float>(std::cout << "out2_host  : ", out2_host.mData, ",") <<
+            // std::endl; LogRangeAsType<float>(std::cout << "out2_device: ", out2_device.mData, ",")
+            //<< std::endl;
         }
     }
 }

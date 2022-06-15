@@ -249,6 +249,7 @@ void device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_
     DeviceMem bias1_k0_k1_device_buf(sizeof(TOut) * bias1_k0_k1.mDesc.GetElementSpace());
     DeviceMem out1_n_k0_ho_wo_k1_device_buf(sizeof(TOut) *
                                             out1_n_k0_ho_wo_k1.mDesc.GetElementSpace());
+
     DeviceMem wei2_k_c0_y_x_c1_device_buf(sizeof(TInWei) *
                                           wei2_k_c0_y_x_c1.mDesc.GetElementSpace());
     DeviceMem bias2_k0_k1_device_buf(sizeof(TOut) * bias2_k0_k1.mDesc.GetElementSpace());
@@ -262,32 +263,65 @@ void device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_
     wei2_k_c0_y_x_c1_device_buf.ToDevice(wei2_k_c0_y_x_c1.mData.data());
     bias2_k0_k1_device_buf.ToDevice(bias2_k0_k1.mData.data());
 
-    GridGemmTuningParameters<
-        256,                                   // BlockSize
-        CONV1_C0 * CONV1_Y * CONV1_X,          // E1
-        CONV1_C1,                              // E2
-        4,                                     // K2
-        1,                                     // E0PerBlock
-        CONV1_K,                               // KPerBlock
-        16,                                    // HoPerBlock
-        64,                                    // WoPerBlock
-        2,                                     // E1PerBlock
-        16,                                    // KPerThread
-        2,                                     // HoPerThread
-        2,                                     // WoPerThread
-        1,                                     // EPerThread
-        Sequence<1, CONV1_C0, 1, 1, CONV1_C1>, // ABlockTransferThreadSliceLengths_E0_E1_K0_K1_E2
-        Sequence<1,
-                 CONV1_Y * CONV1_X,
-                 1,
-                 CONV1_K,
-                 1>, // ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2
-        CONV1_C1,    // ABlockTransferSrcScalarPerVector_E2
-        CONV1_C1,    // ABlockTransferDstScalarPerVector_E2
-        CONV1_C1,    // BThreadTransferSrcScalarPerVector_E2
-        CONV1_K1     // CThreadTransferDstScalarPerVector_K
-        >
+    GridGemmTuningParameters<256,                          // BlockSize
+                             CONV1_C0 * CONV1_Y * CONV1_X, // E1
+                             CONV1_C1,                     // E2
+                             4,                            // K2
+                             1,                            // E0PerBlock
+                             CONV1_K,                      // KPerBlock
+                             16,                           // HoPerBlock
+                             64,                           // WoPerBlock
+                             2,                            // E1PerBlock
+                             CONV1_K,                      // KPerThread
+                             2,                            // HoPerThread
+                             2,                            // WoPerThread
+                             1,                            // EPerThread
+                             Sequence<1,
+                                      CONV1_C0 * CONV1_Y * CONV1_X,
+                                      1,
+                                      CONV1_K,
+                                      CONV1_C1>, // ABlockTransferBlockSliceLengths_E0_E1_K0_K1_E2
+                             Sequence<1,
+                                      CONV1_C0,
+                                      1,
+                                      CONV1_K,
+                                      1>, // ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2
+                             CONV1_C1,    // ABlockTransferSrcScalarPerVector_E2
+                             CONV1_C1,    // ABlockTransferDstScalarPerVector_E2
+                             CONV1_C1,    // BThreadTransferSrcScalarPerVector_E2
+                             CONV1_K1     // CThreadTransferDstScalarPerVector_K
+                             >
         conv1_tuning_parameters{};
+
+    GridGemmTuningParameters<256,                          // BlockSize
+                             CONV2_C0 * CONV2_Y * CONV2_X, // E1
+                             CONV2_C1,                     // E2
+                             4,                            // K2
+                             1,                            // E0PerBlock
+                             CONV2_K,                      // KPerBlock
+                             16,                           // HoPerBlock
+                             64,                           // WoPerBlock
+                             2,                            // E1PerBlock
+                             CONV2_K,                      // KPerThread
+                             2,                            // HoPerThread
+                             2,                            // WoPerThread
+                             1,                            // EPerThread
+                             Sequence<1,
+                                      CONV2_C0 * CONV2_Y * CONV2_X,
+                                      1,
+                                      CONV2_K,
+                                      CONV2_C1>, // ABlockTransferBlockSliceLengths_E0_E1_K0_K1_E2
+                             Sequence<1,
+                                      CONV2_C0,
+                                      1,
+                                      CONV2_K,
+                                      1>, // ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2
+                             CONV2_C1,    // ABlockTransferSrcScalarPerVector_E2
+                             CONV2_C1,    // ABlockTransferDstScalarPerVector_E2
+                             CONV2_C1,    // BThreadTransferSrcScalarPerVector_E2
+                             CONV2_K1     // CThreadTransferDstScalarPerVector_K
+                             >
+        conv2_tuning_parameters{};
 
     const auto in1_n_c0_hi_wi_c1_desc = make_naive_tensor_descriptor_packed(
         make_tuple(CONV1_N, CONV1_C0, CONV1_Hi, CONV1_Wi, CONV1_C1));
@@ -326,17 +360,17 @@ void device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_
             TAcc,
             TOut,
             decltype(conv1_tuning_parameters),
-            decltype(conv1_tuning_parameters)>{};
+            decltype(conv2_tuning_parameters)>{};
 
     for(int i = 0; i < 5; i++)
     {
         const auto ave_time =
             conv_driver.Run(conv1_desc,
-                            conv2_desc,
                             static_cast<TInWei*>(wei1_k_c0_y_x_c1_device_buf.GetDeviceBuffer()),
                             static_cast<TInWei*>(in1_n_c0_hi_wi_c1_device_buf.GetDeviceBuffer()),
                             static_cast<TOut*>(bias1_k0_k1_device_buf.GetDeviceBuffer()),
                             static_cast<TOut*>(out1_n_k0_ho_wo_k1_device_buf.GetDeviceBuffer()),
+                            conv2_desc,
                             static_cast<TInWei*>(wei2_k_c0_y_x_c1_device_buf.GetDeviceBuffer()),
                             static_cast<TOut*>(bias2_k0_k1_device_buf.GetDeviceBuffer()),
                             static_cast<TOut*>(out2_n_k0_ho_wo_k1_device_buf.GetDeviceBuffer()),
