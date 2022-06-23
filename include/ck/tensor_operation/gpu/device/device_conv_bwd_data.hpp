@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #ifndef DEVICE_CONV_BWD_DATA_HPP
 #define DEVICE_CONV_BWD_DATA_HPP
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #ifndef DRIVER_CONTRACTION_DLOPS_V1R2_HPP
 #define DRIVER_CONTRACTION_DLOPS_V1R2_HPP
 

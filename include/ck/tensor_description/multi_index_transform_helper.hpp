@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #ifndef CK_MULTI_INDEX_TRANSFORM_HELPER_HPP
 #define CK_MULTI_INDEX_TRANSFORM_HELPER_HPP
 

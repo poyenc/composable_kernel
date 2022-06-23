@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #ifndef DEVICE_GEMM_XDL_SPLITK_C_SHUFFLE_HPP
 #define DEVICE_GEMM_XDL_SPLITK_C_SHUFFLE_HPP
 

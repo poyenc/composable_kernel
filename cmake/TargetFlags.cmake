@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 
 function(get_target_property2 VAR TARGET PROPERTY)
     get_target_property(_pflags ${TARGET} ${PROPERTY})

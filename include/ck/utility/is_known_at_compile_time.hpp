@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #ifndef IS_KNOWN_AT_COMPILE_TIME_HPP
 #define IS_KNOWN_AT_COMPILE_TIME_HPP
 

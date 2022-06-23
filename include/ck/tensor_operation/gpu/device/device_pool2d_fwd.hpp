@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #ifndef DEVICE_POOL2D_FWD_HPP
 #define DEVICE_POOL2D_FWD_HPP
 

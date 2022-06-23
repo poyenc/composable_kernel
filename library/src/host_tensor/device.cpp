@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #include "device.hpp"
 
 DeviceMem::DeviceMem(std::size_t mem_size) : mMemSize(mem_size)

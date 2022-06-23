@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2022, Advanced Micro Devices, Inc. All rights reserved.
+
 #include <stdlib.h>
 #include "config.hpp"
 #include "device_convnd_fwd_xdl_nhwc_kyxc_nhwk.hpp"
