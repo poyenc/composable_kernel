@@ -86,12 +86,12 @@ int main(int argc, char* argv[])
 
     constexpr auto I0 = Number<0>{};
     constexpr auto I1 = Number<1>{};
-    constexpr auto I2 = Number<2>{};
-    constexpr auto I3 = Number<3>{};
-    constexpr auto I4 = Number<4>{};
-    constexpr auto I5 = Number<5>{};
-    constexpr auto I6 = Number<6>{};
-    constexpr auto I7 = Number<6>{};
+    // constexpr auto I2 = Number<2>{};
+    // constexpr auto I3 = Number<3>{};
+    // constexpr auto I4 = Number<4>{};
+    // constexpr auto I5 = Number<5>{};
+    // constexpr auto I6 = Number<6>{};
+    // constexpr auto I7 = Number<6>{};
 
 #if USE_DYNAMIC_MODE
     // dynamic mode
@@ -203,7 +203,7 @@ int main(int argc, char* argv[])
     using in_data_t  = float;
     using acc_data_t = float;
     using out_data_t = float;
-#elif 1
+#elif 0
     using in_data_t   = half_t;
     using acc_data_t  = float;
     using out_data_t  = half_t;
@@ -240,26 +240,29 @@ int main(int argc, char* argv[])
     std::vector<std::size_t> in2_lengths_host(5), wei2_lengths_host(5), out2_lengths_host(5),
         bias2_lengths_host(2);
 
+    constexpr auto CONV2_K0 = K0;
+    constexpr auto CONV2_K1 = K1;
+
     in2_lengths_host[0] = static_cast<std::size_t>(N);
     in2_lengths_host[1] = static_cast<std::size_t>(C0);
     in2_lengths_host[2] = static_cast<std::size_t>(Ho);
     in2_lengths_host[3] = static_cast<std::size_t>(Wo);
     in2_lengths_host[4] = static_cast<std::size_t>(C1);
 
-    wei2_lengths_host[0] = static_cast<std::size_t>(K0 * K1);
+    wei2_lengths_host[0] = static_cast<std::size_t>(CONV2_K1 * CONV2_K0);
     wei2_lengths_host[1] = static_cast<std::size_t>(K0);
     wei2_lengths_host[2] = static_cast<std::size_t>(I1);
     wei2_lengths_host[3] = static_cast<std::size_t>(I1);
     wei2_lengths_host[4] = static_cast<std::size_t>(K1);
 
     out2_lengths_host[0] = static_cast<std::size_t>(N);
-    out2_lengths_host[1] = static_cast<std::size_t>(K0);
+    out2_lengths_host[1] = static_cast<std::size_t>(CONV2_K0);
     out2_lengths_host[2] = static_cast<std::size_t>(Ho);
     out2_lengths_host[3] = static_cast<std::size_t>(Wo);
-    out2_lengths_host[4] = static_cast<std::size_t>(K1);
+    out2_lengths_host[4] = static_cast<std::size_t>(CONV2_K1);
 
-    bias2_lengths_host[0] = static_cast<std::size_t>(K0);
-    bias2_lengths_host[1] = static_cast<std::size_t>(K1);
+    bias2_lengths_host[0] = static_cast<std::size_t>(CONV2_K0);
+    bias2_lengths_host[1] = static_cast<std::size_t>(CONV2_K1);
 
     Tensor<in_data_t> in1(in1_lengths_host);
     Tensor<in_data_t> wei1(wei1_lengths_host);
@@ -328,16 +331,16 @@ int main(int argc, char* argv[])
         wei2.GenerateTensorValue(gen_wei, num_thread);
     }
 
-    bias1.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
-    bias2.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-0.5, 0.5}, num_thread);
+    bias1.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-3, 3}, num_thread);
+    bias2.GenerateTensorValue(GeneratorTensor_3<in_data_t>{-3, 3}, num_thread);
 
     const auto in1_lengths_dev  = make_tuple(N, C0, Hi, Wi, C1);
     const auto wei1_lengths_dev = make_tuple(K0 * K1, C0, Y, X, C1);
     const auto out1_lengths_dev = make_tuple(N, K0, Ho, Wo, K1);
 
     const auto in2_lengths_dev  = make_tuple(N, K0, Ho, Wo, K1);
-    const auto wei2_lengths_dev = make_tuple(K0 * K1, K0, I1, I1, K1);
-    const auto out2_lengths_dev = make_tuple(N, K0, Ho, Wo, K1);
+    const auto wei2_lengths_dev = make_tuple(CONV2_K0 * CONV2_K1, K0, I1, I1, K1);
+    const auto out2_lengths_dev = make_tuple(N, CONV2_K0, Ho, Wo, CONV2_K1);
 
     const auto conv_strides_dev   = make_tuple(conv_stride_h, conv_stride_w);
     const auto conv_dilations_dev = make_tuple(conv_dilation_h, conv_dilation_w);

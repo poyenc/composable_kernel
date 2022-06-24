@@ -266,12 +266,12 @@ void device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_
     GridGemmTuningParameters<256,                          // BlockSize
                              CONV1_C0 * CONV1_Y * CONV1_X, // E1
                              CONV1_C1,                     // E2
-                             4,                            // K2
+                             2,                            // K2
                              1,                            // E0PerBlock
                              CONV1_K,                      // KPerBlock
                              16,                           // HoPerBlock
                              64,                           // WoPerBlock
-                             2,                            // E1PerBlock
+                             1,                            // E1PerBlock
                              CONV1_K,                      // KPerThread
                              2,                            // HoPerThread
                              2,                            // WoPerThread
@@ -296,12 +296,12 @@ void device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_
     GridGemmTuningParameters<256,                          // BlockSize
                              CONV2_C0 * CONV2_Y * CONV2_X, // E1
                              CONV2_C1,                     // E2
-                             4,                            // K2
+                             2,                            // K2
                              1,                            // E0PerBlock
                              CONV2_K,                      // KPerBlock
                              16,                           // HoPerBlock
                              64,                           // WoPerBlock
-                             2,                            // E1PerBlock
+                             CONV2_C0 * CONV2_Y * CONV2_X, // E1PerBlock
                              CONV2_K,                      // KPerThread
                              2,                            // HoPerThread
                              2,                            // WoPerThread
@@ -377,11 +377,14 @@ void device_conv3x3_conv1x1_bias_activ_forward_implicit_gemm_v5r1_dlops_nc0hwc1_
                             nrepeat);
 
         {
-            // float perf = static_cast<float>(std::size_t(2) * N * K * Ho * Wo * C0 * C1 * Y * X) /
+            // float perf =
+            // static_cast<float>(std::size_t(2) * (CONV2_N * CONV2_K * CONV2_Ho * CONV2_Wo *
+            // CONV2_C0 * CONV2_C1 * CONV2_Y * CONV2_X) +
+            // std::size_t(2) * (CONV1_N * CONV1_K * CONV1_Ho * CONV1_Wo *
+            // CONV1_C0 * CONV1_C1 * CONV1_Y * CONV1_X)) /
             //(std::size_t(1000) * 1000 * 1000) / ave_time;
 
-            // std::cout << "Average time : " << ave_time << " ms, " << perf << " TFlop/s"
-            //<< std::endl;
+            std::cout << "Average time : " << ave_time << " ms" << std::endl;
         }
     }
 #endif

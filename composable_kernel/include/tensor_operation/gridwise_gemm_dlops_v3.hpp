@@ -442,6 +442,12 @@ struct GridwiseGemmDlops_km_kn_mn_v3
         return c_k1_n_h2_w2_thread_gemm_desc;
     }
 
+    __host__ __device__ static constexpr auto MakeBE1NH2W2E2ThreadDescriptor()
+    {
+        return make_naive_tensor_descriptor_packed(make_tuple(
+            Number<E1PerBlock>{}, I1, Number<HoPerThread>{}, Number<WoPerThread>{}, Number<E2>{}));
+    }
+
     __host__ __device__ static constexpr auto MakeDKH2W2ThreadDescriptor()
     {
         return make_naive_tensor_descriptor_packed(
@@ -693,7 +699,6 @@ struct GridwiseGemmDlops_km_kn_mn_v3
                 const CThreadDesc_K1_N_H2_W2&,
                 const DGridDesc_K0_K1x_N_H0_H1_Hx_W0_W1_Wx& d_k0_k1x_n_h0_h1_hx_w0_w1_wx_grid_desc)
     {
-
         const index_t k_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I0]);
         const index_t n_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I1]);
         const index_t ho_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I2]);
@@ -786,7 +791,6 @@ struct GridwiseGemmDlops_km_kn_mn_v3
             const CThreadDesc_K1_N_H2_W2&,
             const DGridDesc_K0_K1_N_H0_H1_Hx_W0_W1_Wx& d_k0_k1_n_h0_h1_hx_w0_w1_wx_grid_desc)
     {
-
         const index_t k_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I0]);
         const index_t n_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I1]);
         const index_t ho_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I2]);
@@ -892,7 +896,6 @@ struct GridwiseGemmDlops_km_kn_mn_v3
               const CThreadDesc_K1_N_H2_W2&,
               const DGridDesc_K0_K1_N_H0_H1_Hx_W0_W1_Wx& d_k0_k1_n_h0_h1_hx_w0_w1_wx_grid_desc)
     {
-
         const index_t k_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I0]);
         const index_t n_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I1]);
         const index_t ho_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I2]);
@@ -1243,7 +1246,7 @@ struct GridwiseGemmDlops_km_kn_mn_v3
               typename C1ThreadDesc_K1_N_H2_W2,
               typename C2ThreadDesc_K1_N_H2_W2,
               bool HasMainE0BlockLoop>
-    __device__ static void GemmOpHasE1LoopV2(
+    __device__ static void GemmOpHasE1LoopV3(
         const A1GlobalBuff& a1_global_buf,
         const A2GlobalBuff& a2_global_buf,
         const BGlobalBuff& b_global_buf,
@@ -1517,6 +1520,113 @@ struct GridwiseGemmDlops_km_kn_mn_v3
             blockwise_gemm1.Run(a1_block_buf, b_thread_even_buf, c1_thread_buf);
             blockwise_gemm2.Run(a2_block_buf, b_thread_even_buf, c2_thread_buf);
         }
+    }
+
+    template <typename AGlobalBuff,
+              typename BThreadBuff,
+              typename CThreadBuff,
+              typename CBlockIndex,
+              typename CThreadIndex,
+              typename AGridDesc_E0_E1_K0_K1_E2,
+              typename BThreadDesc_E1_N_H2_W2_E2,
+              typename CThreadDesc_K1_N_H2_W2,
+              bool HasMainE0BlockLoop>
+    __device__ static void
+    GemmOpHasE1LoopV2(const AGlobalBuff& a_global_buf,
+                      const BThreadBuff& b_thread_buf,
+                      CThreadBuff& c_thread_buf,
+                      FloatAB* __restrict__ p_shared_block,
+                      const CBlockIndex& c_block_idx,
+                      const CThreadIndex& c_thread_idx,
+                      const AGridDesc_E0_E1_K0_K1_E2& a_e0_e1_k0_k1_e2_grid_desc,
+                      const BThreadDesc_E1_N_H2_W2_E2& b_e1_n_h2_w2_e2_thread_desc,
+                      const CThreadDesc_K1_N_H2_W2&,
+                      integral_constant<bool, HasMainE0BlockLoop>)
+    {
+        constexpr auto HasMainE1BlockLoop       = CalculateHasMainE1BlockLoop();
+        constexpr auto HasDoubleTailE1BlockLoop = CalculateHasDoubleTailE1BlockLoop();
+
+        static_assert(E1 == E1PerBlock, "");
+
+        const index_t k_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I0]);
+        // const index_t n_block_work_id  = __builtin_amdgcn_readfirstlane(c_block_idx[I1]);
+        // const index_t ho_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I2]);
+        // const index_t wo_block_work_id = __builtin_amdgcn_readfirstlane(c_block_idx[I3]);
+
+        constexpr auto max_lds_align = Number<ABlockTransferDstScalarPerVector_E2>{};
+
+        constexpr auto a_e1_k1_e2_block_gemm_desc = make_naive_tensor_descriptor_aligned(
+            make_tuple(Number<E1PerBlock>{}, Number<KPerBlock>{}, Number<E2>{}), max_lds_align);
+
+        constexpr auto b_e1_n_h_w_e2_block_gemm_desc =
+            make_naive_tensor_descriptor_packed(make_tuple(Number<E1PerBlock>{},
+                                                           I1,
+                                                           Number<HoPerBlock>{},
+                                                           Number<WoPerBlock>{},
+                                                           Number<E2>{}));
+
+        constexpr auto c_k1_n_h2_w2_thread_gemm_desc = CThreadDesc_K1_N_H2_W2{};
+
+        auto blockwise_gemm =
+            BlockwiseGemmDlops_km_kn_m0m1n0n1_v3<BlockSize,
+                                                 FloatAB,
+                                                 FloatAB,
+                                                 FloatAcc,
+                                                 decltype(a_e1_k1_e2_block_gemm_desc),
+                                                 decltype(b_e1_n_h_w_e2_block_gemm_desc),
+                                                 decltype(c_k1_n_h2_w2_thread_gemm_desc),
+                                                 EPerThread,
+                                                 K2>{};
+
+        // const auto ho_thread_id = c_thread_idx[I2];
+        // const auto wo_thread_id = c_thread_idx[I3];
+
+#if 1
+        constexpr auto a_e0_e1_k0_k1_e2_block_copy_desc = make_naive_tensor_descriptor_aligned(
+            make_tuple(Number<E0PerBlock>{}, Number<E1>{}, I1, Number<KPerBlock>{}, Number<E2>{}),
+            max_lds_align);
+
+        // A matrix blockwise copy
+        auto a_blockwise_copy =
+            BlockwiseTensorSliceTransfer_v4r1<BlockSize,
+                                              ck::tensor_operation::element_wise::PassThrough,
+                                              ck::tensor_operation::element_wise::PassThrough,
+                                              InMemoryDataOperationEnum_t::Set,
+                                              ABlockTransferBlockSliceLengths_E0_E1_K0_K1_E2,
+                                              ABlockTransferThreadClusterLengths_E0_E1_K0_K1_E2,
+                                              ABlockTransferThreadClusterArrangeOrder,
+                                              FloatAB,
+                                              FloatAB,
+                                              decltype(a_e0_e1_k0_k1_e2_grid_desc),
+                                              decltype(a_e0_e1_k0_k1_e2_block_copy_desc),
+                                              ABlockTransferSrcAccessOrder,
+                                              Sequence<0, 1, 2, 3, 4>,
+                                              ABlockTransferSrcVectorDim,
+                                              4,
+                                              ABlockTransferSrcScalarPerVector,
+                                              ABlockTransferDstScalarPerVector_E2,
+                                              1,
+                                              1,
+                                              AThreadTransferSrcResetCoordinateAfterRun,
+                                              false>(
+                a_e0_e1_k0_k1_e2_grid_desc,
+                make_multi_index(0, 0, k_block_work_id, 0, 0),
+                ck::tensor_operation::element_wise::PassThrough{},
+                a_e0_e1_k0_k1_e2_block_copy_desc,
+                make_multi_index(0, 0, 0, 0, 0),
+                ck::tensor_operation::element_wise::PassThrough{});
+#endif
+
+        auto a_block_buf = make_dynamic_buffer<AddressSpaceEnum_t::Lds>(
+            p_shared_block, a_e0_e1_k0_k1_e2_block_copy_desc.GetElementSpaceSize());
+
+        a_blockwise_copy.RunRead(a_e0_e1_k0_k1_e2_grid_desc, a_global_buf);
+        a_blockwise_copy.RunWrite(a_e0_e1_k0_k1_e2_block_copy_desc, a_block_buf);
+
+        block_sync_lds();
+
+        // LDS double buffer: GEMM on last data
+        blockwise_gemm.Run(a_block_buf, b_thread_buf, c_thread_buf);
     }
 
     template <typename AGlobalBuff,
