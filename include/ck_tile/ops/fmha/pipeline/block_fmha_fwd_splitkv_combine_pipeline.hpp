@@ -108,8 +108,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
 #if defined(ENABLE_DEBUG_STMTS)
 #define DEBUG_STMTS if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == TID)
 #else
-#define DEBUG_STMTS
-        if(false)
+#define DEBUG_STMTS if(false)
 #endif
         // copy lse_acc to LDS
         {
