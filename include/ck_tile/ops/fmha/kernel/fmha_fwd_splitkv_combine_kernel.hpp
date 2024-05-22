@@ -271,7 +271,6 @@ struct FmhaFwdSplitKVCombineKernel
                 sequence<true, kPadSeqLenQ>{});
         }();
 
-        // NUM_SPLITS, shape_batch, nhead, shape_seqlen_q, hdim_v
         auto o_acc_dram = [&]() {
             const auto o_acc_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 o_acc_ptr,
@@ -292,9 +291,9 @@ struct FmhaFwdSplitKVCombineKernel
 
             return transform_tensor_view(
                 o_acc_dram_view,
-                make_tuple(make_merge_transform(make_tuple(new_seqlen_q, kargs.num_splits)),
+                make_tuple(make_merge_transform(make_tuple(kargs.num_splits, new_seqlen_q)),
                            make_pass_through_transform(new_hdim_v)),
-                make_tuple(sequence<1, 0>{}, sequence<2>{}),
+                make_tuple(sequence<0, 1>{}, sequence<2>{}),
                 make_tuple(sequence<0>{}, sequence<1>{}));
         }();
 

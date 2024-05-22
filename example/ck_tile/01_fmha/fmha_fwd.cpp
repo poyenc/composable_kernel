@@ -681,10 +681,10 @@ bool run(const ck_tile::ArgParser& arg_parser)
 #if 0
         for(int i = start_i; i < end_i; ++i)
         {
-            printf("[POYENC][HOST] o_acc[%d] = ", i);
+            printf("[POYENC][HOST] o_acc_host[%2d] = ", i);
             for(int col = 0; col < hdim_v; ++col)
             {
-                printf("%11.7f", o_acc_host_ref(0, 0, 0, i, col));
+                printf("%11.7f", o_acc_host(0, 0, 0, i, col));
             }
             printf("\n");
         }
@@ -714,17 +714,15 @@ bool run(const ck_tile::ArgParser& arg_parser)
                                                opt_seqstart_q,
                                                oacc_element_func);
 
-#if 0
-    for (int i = 0; i < 128; ++i) {
-        std::cout << "[POYENC][HOST] o_host[" << i << "]: " << std::setw(11) << 
-        std::setprecision(7) << o_host.data()[i] << std::endl;
-    }
-#endif
-
     bool pass = true;
     {
         bool cur_pass = ck_tile::check_err(
-            o_host, o_host_ref, std::string("OUT Error: Incorrect results!"), rtol, atol);
+            // o_host_ref2, /// FIXME: use o_host instead
+            o_host,
+            o_host_ref,
+            std::string("OUT Error: Incorrect results!"),
+            rtol,
+            atol);
         pass &= cur_pass;
     }
 

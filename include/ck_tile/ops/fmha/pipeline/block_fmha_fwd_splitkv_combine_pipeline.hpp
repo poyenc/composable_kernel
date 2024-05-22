@@ -70,8 +70,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
     CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
     {
         /// TODO: add padding to avoid bank conflict
-        // return (kM0 * kMaxSplits * sizeof(LSEDataType));
-        return (kM0 * kN1 * sizeof(OaccDataType));
+        return (kM0 * kMaxSplits * sizeof(LSEDataType));
     }
 
 #define MARKER(msg)                     \
@@ -242,6 +241,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                                                           get_validated_m(lse_max(i_idx)));
                     }
 #endif
+#if 0
                     DEBUG_STMTS
                     {
                         printf("[POYENC][DEVICE] p_compute[%2d,%2d]: %11.7f\n",
@@ -249,6 +249,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                                col,
                                p_compute(i_j_idx));
                     }
+#endif
                 });
             });
         }
@@ -350,9 +351,9 @@ struct BlockFmhaFwdSplitKVCombinePipeline
 #if defined(PRINT_LSE_SCALE)
         DEBUG_STMTS
         {
-            for(index_t row = 0; row < kM0; ++row)
+            for(index_t row = 0; row < 32; ++row)
             {
-                printf("[POYENC][DEVICE] lse_scale[%d] = ", row);
+                printf("[POYENC][DEVICE] lse_scale[%2d] = ", row);
                 for(index_t col = 0; col < num_splits; ++col)
                 {
                     printf("%11.7f", lse_acc_lds_ptr[col + row * kMaxSplits]);
@@ -377,50 +378,10 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         auto o_acc = make_static_distributed_tensor<OaccDataType>(o_acc_dist); // Pcompute{j}
         clear_tile(o_acc);
 
-        OaccDataType* o_acc_lds_ptr =
-            static_cast<OaccDataType*>(static_cast<void*>(static_cast<char*>(smem_ptr)));
-
-#if 0
-        auto o_tile = load_tile(o_acc_dram_window);
-        // copy o_tile into LDS
-        {
-            using DataType               = OaccDataType;
-            constexpr auto out_spans =
-                static_distributed_tensor<DataType,
-                                            decltype(o_acc_dist)>::get_distributed_spans();
-            sweep_tile_span(out_spans[number<0>{}], [&](auto idx0) {
-                sweep_tile_span(out_spans[number<1>{}], [&](auto idx1) {
-                    constexpr auto distributed_indices = make_tuple(idx0, idx1);
-                    const auto x_indices               = get_x_indices_from_distributed_indices(
-                        o_acc_dist, distributed_indices);
-
-                    const auto row = x_indices.at(number<0>{});
-                    const auto col = x_indices.at(number<1>{});
-                    
-                    o_acc_lds_ptr[row + col * kMaxSplits] = o_tile(distributed_indices);
-                });
-            });
-        }
-        block_sync_lds();
-
-        DEBUG_STMTS{
-            for(index_t row = 0; row < 32; ++row)
-            {
-                printf("[POYENC][DEVICE] o_tile[%d] = ", row);
-                for(index_t col = 0; col < kN1; ++col)
-                {
-                    printf("%11.7f", o_acc_lds_ptr[col + row * kMaxSplits]);
-                }
-                printf("\n");
-            }
-        }
-#endif
-
 #if 1
         for(index_t i_split = 0; i_split < num_splits; ++i_split)
         {
             auto o_tile = load_tile(o_acc_dram_window);
-
             {
                 using DataType = OaccDataType;
                 constexpr auto out_spans =
@@ -441,7 +402,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                 });
             }
 
-            move_tile_window(o_acc_dram_window, {1, 0});
+            move_tile_window(o_acc_dram_window, {kM0, 0});
         }
 #endif
 
