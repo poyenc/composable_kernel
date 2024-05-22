@@ -48,11 +48,14 @@ if(FMHA_FWD_FAST_EXP2)
     --save-temps
     -Wno-gnu-line-marker
     -DNUM_SPLITS=16
+    # -DTID=0
+    # -DENABLE_DEBUG_STMTS
     # -DDEBUG_PRINT
-    -DPRINT_LSE_MAX
-    -DPRINT_LSE_SUM
-    -DPRINT_LSE_LOGSUM
-    -DPRINT_LSE_ACCUM
+    # -DPRINT_LSE_MAX
+    # -DPRINT_LSE_SUM
+    # -DPRINT_LSE_LOGSUM
+    # -DPRINT_LSE_ACCUM
+    # -DPRINT_LSE_SCALE
     -Wno-unused-parameter
     -Wno-unused-variable
     -Wno-undefined-func-template -DCK_TILE_FMHA_FWD_FAST_EXP2=0 -fgpu-flush-denormals-to-zero)
