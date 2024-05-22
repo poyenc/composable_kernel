@@ -444,21 +444,21 @@ bool run(const ck_tile::ArgParser& arg_parser)
         const ck_tile::index_t row_stride_k    = k_host.get_stride(1 + i_perm);
         const ck_tile::index_t row_stride_v    = v_host.get_stride(1 + i_perm);
         const ck_tile::index_t row_stride_bias = max_seqlen_k;
-        const ck_tile::index_t row_stride_o    = o_host.get_stride(1 + 1 + o_perm);
+        const ck_tile::index_t row_stride_o    = o_host.get_stride(1 + o_perm);
         // setup nhead_stride_* arguments
         const ck_tile::index_t nhead_stride_q    = q_host.get_stride(1 + !i_perm);
         const ck_tile::index_t nhead_stride_k    = k_host.get_stride(1 + !i_perm);
         const ck_tile::index_t nhead_stride_v    = v_host.get_stride(1 + !i_perm);
         const ck_tile::index_t nhead_stride_bias = 0;
         const ck_tile::index_t nhead_stride_lse  = shape_seqlen_q;
-        const ck_tile::index_t nhead_stride_o    = o_host.get_stride(1 + 1 + !o_perm);
+        const ck_tile::index_t nhead_stride_o    = o_host.get_stride(1 + !o_perm);
         // setup batch_stride_* arguments
         const ck_tile::index_t batch_stride_q    = q_host.get_stride(0);
         const ck_tile::index_t batch_stride_k    = k_host.get_stride(0);
         const ck_tile::index_t batch_stride_v    = v_host.get_stride(0);
         const ck_tile::index_t batch_stride_bias = 0;
-        const ck_tile::index_t batch_stride_lse  = lse_host.get_stride(1);
-        const ck_tile::index_t batch_stride_o    = o_host.get_stride(1);
+        const ck_tile::index_t batch_stride_lse  = nhead * shape_seqlen_q;
+        const ck_tile::index_t batch_stride_o    = o_host.get_stride(0);
 
         return fmha_fwd_args{q_buf.GetDeviceBuffer(),
                              k_buf.GetDeviceBuffer(),
@@ -717,12 +717,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
     bool pass = true;
     {
         bool cur_pass = ck_tile::check_err(
-            // o_host_ref2, /// FIXME: use o_host instead
-            o_host,
-            o_host_ref,
-            std::string("OUT Error: Incorrect results!"),
-            rtol,
-            atol);
+            o_host, o_host_ref, std::string("OUT Error: Incorrect results!"), rtol, atol);
         pass &= cur_pass;
     }
 
