@@ -1043,6 +1043,30 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
                     sequence<1, 1>>{});
         }
     }
+
+    template <typename Problem>
+    CK_TILE_HOST_DEVICE static constexpr auto MakeOaccDramTileDistribution()
+    {
+        using OaccDataType = remove_cvref_t<typename Problem::OaccDataType>;
+
+        constexpr index_t kBlockSize = Problem::kBlockSize;
+        constexpr index_t kMPerBlock = Problem::BlockFmhaShape::kM0;
+        constexpr index_t kNPerBlock = Problem::BlockFmhaShape::kN1;
+
+        constexpr index_t N1 = 16 / sizeof(OaccDataType);
+        constexpr index_t N0 = kNPerBlock / N1;
+        constexpr index_t M2 = get_warp_size() / N0;
+        constexpr index_t M1 = kBlockSize / get_warp_size();
+        constexpr index_t M0 = kMPerBlock / (M2 * M1);
+
+        return make_static_tile_distribution(
+            tile_distribution_encoding<sequence<1>,
+                                       tuple<sequence<M0, M1, M2>, sequence<N0, N1>>,
+                                       tuple<sequence<1>, sequence<1, 2>>,
+                                       tuple<sequence<1>, sequence<2, 0>>,
+                                       sequence<1, 2>,
+                                       sequence<0, 1>>{});
+    }
 };
 
 } // namespace ck_tile

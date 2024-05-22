@@ -271,18 +271,31 @@ struct FmhaFwdSplitKVCombineKernel
                 sequence<true, kPadSeqLenQ>{});
         }();
 
-        const auto o_acc_dram = [&]() {
+        // NUM_SPLITS, shape_batch, nhead, shape_seqlen_q, hdim_v
+        auto o_acc_dram = [&]() {
             const auto o_acc_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 o_acc_ptr,
-                make_tuple(kargs.num_splits, kargs.seqlen_q),
-                make_tuple(kargs.b * kargs.h * kargs.max_seqlen_q, 1),
-                number<8>{},
+                make_tuple(kargs.num_splits, kargs.seqlen_q, kargs.hdim_v),
+                make_tuple(kargs.b * kargs.h * kargs.max_seqlen_q * kargs.hdim_v, kargs.hdim_v, 1),
+                number<MainPipeline::kAlignmentO>{},
                 number<1>{});
 
-            return pad_tensor_view(
+            auto o_acc_dram_view = pad_tensor_view(
                 o_acc_dram_naive,
-                make_tuple(number<MainPipeline::kMaxSplits>{}, number<MainPipeline::kM0>{}),
-                sequence<true, kPadSeqLenQ>{});
+                make_tuple(number<1>{}, number<MainPipeline::kM0>{}, number<MainPipeline::kN1>{}),
+                sequence<false, kPadSeqLenQ, kPadHeadDimV>{});
+
+            const index_t new_seqlen_q =
+                integer_divide_ceil(kargs.seqlen_q, MainPipeline::kM0) * MainPipeline::kM0;
+            const index_t new_hdim_v =
+                integer_divide_ceil(kargs.hdim_v, MainPipeline::kN1) * MainPipeline::kN1;
+
+            return transform_tensor_view(
+                o_acc_dram_view,
+                make_tuple(make_merge_transform(make_tuple(new_seqlen_q, kargs.num_splits)),
+                           make_pass_through_transform(new_hdim_v)),
+                make_tuple(sequence<1, 0>{}, sequence<2>{}),
+                make_tuple(sequence<0>{}, sequence<1>{}));
         }();
 
         auto lse_acc_dram_window = make_tile_window(
@@ -295,9 +308,9 @@ struct FmhaFwdSplitKVCombineKernel
         auto o_acc_dram_window = make_tile_window(
             o_acc_dram,
             [&]() {
-                return make_tuple(number<MainPipeline::kMaxSplits>{}, number<MainPipeline::kM0>{});
+                return make_tuple(number<MainPipeline::kM0>{}, number<MainPipeline::kN1>{});
             }(),
-            {0, i_m0});
+            {i_m0 * kargs.num_splits, 0});
 
         // LSE DRAM window
         auto lse_dram_window = [&, i_nhead_ = i_nhead]() {

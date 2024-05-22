@@ -615,7 +615,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
     {
         constexpr int MPerThread = 32;
 
-        int start_i = 32;
+        int start_i = 0;
         int end_i   = start_i + MPerThread;
 #if defined(PRINT_LSE_MAX)
         ck_tile::HostTensor<LSEDataType> lse_max({MPerThread});
@@ -653,7 +653,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
             printf("[POYENC][HOST] lse_logsum[%2d]: %11.7f\n", i, lse_logsum(i - start_i));
         }
 #endif
-#if 0
+#if defined(PRINT_LSE_SCALE)
         ck_tile::HostTensor<LSEDataType> lse_scale({MPerThread, NUM_SPLITS});
         for(int i = start_i; i < end_i; ++i)
         {
@@ -674,6 +674,17 @@ bool run(const ck_tile::ArgParser& arg_parser)
             for(int i_split = 0; i_split < NUM_SPLITS; ++i_split)
             {
                 printf("%11.7f", lse_acc_host_ref(i_split, 0, 0, i));
+            }
+            printf("\n");
+        }
+#endif
+#if 0
+        for(int i = start_i; i < end_i; ++i)
+        {
+            printf("[POYENC][HOST] o_acc[%d] = ", i);
+            for(int col = 0; col < hdim_v; ++col)
+            {
+                printf("%11.7f", o_acc_host_ref(0, 0, 0, i, col));
             }
             printf("\n");
         }
@@ -703,10 +714,17 @@ bool run(const ck_tile::ArgParser& arg_parser)
                                                opt_seqstart_q,
                                                oacc_element_func);
 
+#if 0
+    for (int i = 0; i < 128; ++i) {
+        std::cout << "[POYENC][HOST] o_host[" << i << "]: " << std::setw(11) << 
+        std::setprecision(7) << o_host.data()[i] << std::endl;
+    }
+#endif
+
     bool pass = true;
     {
         bool cur_pass = ck_tile::check_err(
-            o_host_ref2, o_host_ref, std::string("OUT Error: Incorrect results!"), rtol, atol);
+            o_host, o_host_ref, std::string("OUT Error: Incorrect results!"), rtol, atol);
         pass &= cur_pass;
     }
 

@@ -70,7 +70,8 @@ struct BlockFmhaFwdSplitKVCombinePipeline
     CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
     {
         /// TODO: add padding to avoid bank conflict
-        return kM0 * kMaxSplits * sizeof(LSEDataType);
+        // return (kM0 * kMaxSplits * sizeof(LSEDataType));
+        return (kM0 * kN1 * sizeof(OaccDataType));
     }
 
 #define MARKER(msg)                     \
@@ -105,7 +106,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         auto lse_acc = load_tile(lse_acc_dram_window); // [kMaxSplits, kM0]
         static_assert(8 == decltype(lse_acc.thread_buf_)::size());
 
-#define TID 64
+#define TID 0
 #define ENABLE_DEBUG_STMTS
 #if defined(ENABLE_DEBUG_STMTS)
 #define DEBUG_STMTS if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == TID)
@@ -179,36 +180,9 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         const auto f_max = [](auto e0, auto e1) { return ck_tile::max(e0, e1); };
         const auto f_sum = [](auto e0, auto e1) { return e0 + e1; };
 
-#if 1
         auto lse_max = block_tile_reduce<LSEDataType>(
             lse_accum, sequence<1>{}, f_max, -numeric<LSEDataType>::infinity());
         block_tile_reduce_sync(lse_max, f_max, bool_constant<false>{});
-#else // reduce by hand
-        auto lse_max = decltype(block_tile_reduce<LSEDataType>(
-            lse_accum, sequence<1>{}, f_max, -numeric<LSEDataType>::infinity())){};
-        {
-            constexpr auto out_spans =
-                static_distributed_tensor<LSEDataType, decltype(lse_max.get_tile_distribution())>::
-                    get_distributed_spans();
-            sweep_tile_span(out_spans[number<0>{}], [&](auto idx0) {
-                constexpr auto distributed_indices = make_tuple(idx0);
-                const auto x_indices               = get_x_indices_from_distributed_indices(
-                    lse_max.get_tile_distribution(), distributed_indices);
-
-                const auto row = x_indices.at(number<0>{});
-
-                LSEDataType the_max = -numeric<LSEDataType>::infinity();
-                for(int col = 0; col < num_splits; ++col)
-                {
-                    if(the_max < lse_acc_lds_ptr[col + row * kMaxSplits])
-                    {
-                        the_max = lse_acc_lds_ptr[col + row * kMaxSplits];
-                    }
-                }
-                lse_max(distributed_indices) = the_max;
-            });
-        }
-#endif
 
 #if defined(PRINT_LSE_MAX)
         DEBUG_STMTS
@@ -279,32 +253,11 @@ struct BlockFmhaFwdSplitKVCombinePipeline
             });
         }
         __syncthreads();
-#if 1
+
         auto lse_sum = block_tile_reduce<LSEDataType>(
             p_compute, sequence<1>{}, f_sum, type_convert<LSEDataType>(0));
         block_tile_reduce_sync(lse_sum, f_sum, bool_constant<false>{});
-#else // reduce by hand
-        decltype(lse_max) lse_sum;
-        {
-            constexpr auto lse_sum_spans = decltype(lse_sum)::get_distributed_spans();
-            sweep_tile_span(lse_sum_spans[number<0>{}], [&](auto idx0) {
-                constexpr auto i_idx = make_tuple(idx0);
-                const auto x_indices =
-                    get_x_indices_from_distributed_indices(lse_sum.get_tile_distribution(), i_idx);
 
-                LSEDataType the_sum = 0;
-
-                const auto row = x_indices.at(number<0>{});
-                for(int col = 0; col < num_splits; ++col)
-                {
-                    the_sum += ck_tile::exp(lse_acc_lds_ptr[col + row * kMaxSplits] -
-                                            get_validated_m(lse_max(i_idx)));
-                }
-
-                lse_sum(i_idx) = the_sum;
-            });
-        }
-#endif
 #if defined(PRINT_LSE_SUM)
         DEBUG_STMTS
         {
@@ -392,19 +345,107 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                 }
             });
         }
+        block_sync_lds();
+
+#if defined(PRINT_LSE_SCALE)
+        DEBUG_STMTS
+        {
+            for(index_t row = 0; row < kM0; ++row)
+            {
+                printf("[POYENC][DEVICE] lse_scale[%d] = ", row);
+                for(index_t col = 0; col < num_splits; ++col)
+                {
+                    printf("%11.7f", lse_acc_lds_ptr[col + row * kMaxSplits]);
+                }
+                printf("\n");
+            }
+        }
+#endif
 
         if constexpr(kStoreLSE)
         {
             static_assert(kBlockSize == 256);
-            // static_assert(decltype(lse_accum.thread_buf_)::size() == kM0);
-            // static_assert(decltype(lse_max.thread_buf_)::size() == kM0);
             store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse_logsum));
         }
 
-        constexpr auto gemm_1   = Policy::template GetKVBlockGemm<Problem>();
-        using OaccBlockTileType = decltype(gemm_1.MakeCBlockTile());
-        MARKER("end pipeline");
-        return OaccBlockTileType{};
+        auto o_acc_dist = Policy::template MakeOaccDramTileDistribution<Problem>();
+        auto o_acc_dram_window =
+            make_tile_window(o_acc_dram_block_window_tmp.get_bottom_tensor_view(),
+                             o_acc_dram_block_window_tmp.get_window_lengths(),
+                             o_acc_dram_block_window_tmp.get_window_origin(),
+                             o_acc_dist);
+        auto o_acc = make_static_distributed_tensor<OaccDataType>(o_acc_dist); // Pcompute{j}
+        clear_tile(o_acc);
+
+        OaccDataType* o_acc_lds_ptr =
+            static_cast<OaccDataType*>(static_cast<void*>(static_cast<char*>(smem_ptr)));
+
+#if 0
+        auto o_tile = load_tile(o_acc_dram_window);
+        // copy o_tile into LDS
+        {
+            using DataType               = OaccDataType;
+            constexpr auto out_spans =
+                static_distributed_tensor<DataType,
+                                            decltype(o_acc_dist)>::get_distributed_spans();
+            sweep_tile_span(out_spans[number<0>{}], [&](auto idx0) {
+                sweep_tile_span(out_spans[number<1>{}], [&](auto idx1) {
+                    constexpr auto distributed_indices = make_tuple(idx0, idx1);
+                    const auto x_indices               = get_x_indices_from_distributed_indices(
+                        o_acc_dist, distributed_indices);
+
+                    const auto row = x_indices.at(number<0>{});
+                    const auto col = x_indices.at(number<1>{});
+                    
+                    o_acc_lds_ptr[row + col * kMaxSplits] = o_tile(distributed_indices);
+                });
+            });
+        }
+        block_sync_lds();
+
+        DEBUG_STMTS{
+            for(index_t row = 0; row < 32; ++row)
+            {
+                printf("[POYENC][DEVICE] o_tile[%d] = ", row);
+                for(index_t col = 0; col < kN1; ++col)
+                {
+                    printf("%11.7f", o_acc_lds_ptr[col + row * kMaxSplits]);
+                }
+                printf("\n");
+            }
+        }
+#endif
+
+#if 1
+        for(index_t i_split = 0; i_split < num_splits; ++i_split)
+        {
+            auto o_tile = load_tile(o_acc_dram_window);
+
+            {
+                using DataType = OaccDataType;
+                constexpr auto out_spans =
+                    static_distributed_tensor<DataType,
+                                              decltype(o_acc_dist)>::get_distributed_spans();
+                sweep_tile_span(out_spans[number<0>{}], [&](auto idx0) {
+                    sweep_tile_span(out_spans[number<1>{}], [&](auto idx1) {
+                        constexpr auto distributed_indices = make_tuple(idx0, idx1);
+                        const auto x_indices =
+                            get_x_indices_from_distributed_indices(o_acc_dist, distributed_indices);
+
+                        const auto row = x_indices.at(number<0>{});
+                        const auto col = x_indices.at(number<1>{});
+
+                        LSEDataType lse_scale = lse_acc_lds_ptr[i_split + row * kMaxSplits];
+                        o_acc(distributed_indices) += lse_scale * o_tile(distributed_indices);
+                    });
+                });
+            }
+
+            move_tile_window(o_acc_dram_window, {1, 0});
+        }
+#endif
+
+        return o_acc;
     }
 
     template <typename LSEaccDramBlockWindow,
