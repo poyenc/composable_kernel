@@ -105,8 +105,6 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         auto lse_acc = load_tile(lse_acc_dram_window); // [kMaxSplits, kM0]
         static_assert(8 == decltype(lse_acc.thread_buf_)::size());
 
-#define TID 0
-#define ENABLE_DEBUG_STMTS
 #if defined(ENABLE_DEBUG_STMTS)
 #define DEBUG_STMTS if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == TID)
 #else
