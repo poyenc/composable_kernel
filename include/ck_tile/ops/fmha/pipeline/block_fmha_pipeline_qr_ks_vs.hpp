@@ -204,15 +204,15 @@ struct BlockFmhaPipelineQRKSVS
         const auto [seqlen_k_start, seqlen_k_end] = mask.GetTileRangeAlongX(
             q_origin.at(number<0>{}), number<kM0>{}, number<kN0>{}, i_split, num_splits);
 
+        const auto num_total_loop = integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
 #if defined(DEBUG_PRINT)
-        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0)
+        if(blockIdx.x == 0 && blockIdx.y == 2 && blockIdx.z == 0 && threadIdx.x == 0)
         {
             printf("[POYENC] num_splits: %d, i_split: %d\n", num_splits, i_split);
             printf("[POYENC] seqlen_k_start: %d, seqlen_k_end: %d\n", seqlen_k_start, seqlen_k_end);
+            printf("[POYENC] num_total_loop: %d\n", num_total_loop);
         }
 #endif
-
-        const auto num_total_loop = integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
 
         // check early exit if masked and no work to do.
         if constexpr(FmhaMask::IsMasking)
@@ -356,6 +356,21 @@ struct BlockFmhaPipelineQRKSVS
 #endif
             }
             move_tile_window(bias_dram_window, {0, kN0});
+
+            // [POYENC] added
+            {
+                const auto k_origin = k_dram_block_window.get_window_origin();
+                set_tile_if(s_acc,
+                            -numeric<SMPLComputeDataType>::infinity(),
+                            [&, seqlen_k_end_ = seqlen_k_end](auto tile_idx) {
+                                const auto row =
+                                    q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
+                                const auto col =
+                                    k_origin.at(number<0>{}) + tile_idx.at(number<1>{});
+                                return seqlen_k_end_ <= col;
+                            });
+            }
+
             if constexpr(kPadSeqLenK || FmhaMask::IsMasking)
             {
                 const auto k_origin      = k_dram_block_window.get_window_origin();
