@@ -77,7 +77,8 @@ reference_mha_fwd_splitkv(const QueryTensor& query_bhsd,
         {
             index_t num_key_per_split = real_seqlen_k / num_splits;
             index_t split_key_start   = key_start + i_split * num_key_per_split;
-            index_t split_key_end     = split_key_start + num_key_per_split;
+            index_t split_key_end =
+                (i_split == num_splits - 1 ? key_end : split_key_start + num_key_per_split);
 
             // clang-format off
             using Slice = HostTensorSlice;
@@ -105,8 +106,9 @@ reference_mha_fwd_splitkv(const QueryTensor& query_bhsd,
             HostTensor<KeyDataType> key_hsd(key_view_hsd.get_lengths());
             HostTensor<ValueDataType> value_hsd(value_view_hsd.get_lengths());
             // create local tensors for holding intermediate result
-            HostTensor<SMPLComputeDataType> s_hss({nhead, real_seqlen_q, num_key_per_split});
-            HostTensor<PDataType> p_hss({nhead, real_seqlen_q, num_key_per_split});
+            HostTensor<SMPLComputeDataType> s_hss(
+                {nhead, real_seqlen_q, split_key_end - split_key_start});
+            HostTensor<PDataType> p_hss({nhead, real_seqlen_q, split_key_end - split_key_start});
 
             query_hsd.for_each([&](auto& self, auto i) { self(i) = query_view_hsd(i); });
             key_hsd.for_each([&](auto& self, auto i) { self(i) = key_view_hsd(i); });
