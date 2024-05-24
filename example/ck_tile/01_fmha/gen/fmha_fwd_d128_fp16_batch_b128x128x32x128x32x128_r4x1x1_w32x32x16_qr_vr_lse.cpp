@@ -18,7 +18,7 @@ using fmha_shape_0 = ck_tile::TileFmhaShape<fmha_block_tile_0,
                                             true>;
 
 using fmha_trait_0 =
-    ck_tile::TileFmhaTraits<false, false, false, false, false, true, false, -1, 16>;
+    ck_tile::TileFmhaTraits<false, false, false, false, false, true, false, -1, MAX_NUM_SPLITS>;
 
 using fmha_mask_0 = ck_tile::SimplifiedGenericAttentionMask<false>;
 
@@ -82,7 +82,7 @@ float fmha_fwd_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
 {
     using k_ = fmha_kernel_0;
     if(s.log_level_ > 0)
-        std::cout << ", " << k_::GetName() << std::endl;
+        std::cout << ", " << k_::GetName() << std::flush;
 
     float time_a = [&] {
         auto [kargs, grids]                    = fmha_fwd_create_kargs_and_grids<k_>(a);
