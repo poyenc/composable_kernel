@@ -70,6 +70,7 @@ auto create_args(int argc, char* argv[])
                 "1",
                 "permute input\n"
                 "if true, will be b*h*s*d, else b*s*h*d")
+        .insert("num_splits", "1", "# of splits")
         .insert("operm", "1", "permute output")
         .insert("bias", "0", "add bias or not")
         .insert("prec", "fp16", "data type. fp16/bf16/fp8/bf8")
@@ -187,6 +188,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
             return false;
         }
     }
+    int num_splits = arg_parser.get_int("num_splits");
 
     float range_q = arg_parser.get_float("range_q");
     float range_k = arg_parser.get_float("range_k");
@@ -286,7 +288,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
     };
 
     auto get_lengths2 = [&](bool permute,
-                            ck_tile::index_t num_splits,
                             ck_tile::index_t b /*batch*/,
                             ck_tile::index_t h /*nhead*/,
                             ck_tile::index_t s /*seqlen*/,
@@ -322,9 +323,9 @@ bool run(const ck_tile::ArgParser& arg_parser)
 
     // self define lse data layout as [shape_batch, nhead, shape_seqlen_q]
     ck_tile::HostTensor<LSEDataType> lse_acc_host(
-        store_lse ? std::array<ck_tile::index_t, 4>{NUM_SPLITS, shape_batch, nhead, shape_seqlen_q}
+        store_lse ? std::array<ck_tile::index_t, 4>{num_splits, shape_batch, nhead, shape_seqlen_q}
                   : std::array<ck_tile::index_t, 4>{
-                        NUM_SPLITS, 1, 1, 1} /* dummy shape for simplifying code */);
+                        num_splits, 1, 1, 1} /* dummy shape for simplifying code */);
 
     ck_tile::HostTensor<LSEDataType> lse_host(
         store_lse
@@ -332,7 +333,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
             : std::array<ck_tile::index_t, 3>{1, 1, 1} /* dummy shape for simplifying code */);
 
     ck_tile::HostTensor<ODataType> o_acc_host(
-        {NUM_SPLITS, shape_batch, nhead, shape_seqlen_q, hdim_v});
+        {num_splits, shape_batch, nhead, shape_seqlen_q, hdim_v});
 
     ck_tile::HostTensor<ODataType> o_host(
         get_lengths(o_perm, shape_batch, nhead, shape_seqlen_q, hdim_v));
@@ -407,7 +408,8 @@ bool run(const ck_tile::ArgParser& arg_parser)
               << ", h:" << nhead << "/" << nhead_k << ", s:" << seqlen_q << "/" << seqlen_k
               << ", d:" << hdim_q << "/" << hdim_v << ", scale_s:" << scale_s
               << ", bias:" << use_bias << ", lse:" << store_lse << ", squant:" << squant
-              << ", mask:" << mask << ", v:" << vlayout << std::flush;
+              << ", mask:" << mask << ", v:" << vlayout << ", num_splits:" << num_splits
+              << std::flush;
 
     auto fmha_traits = fmha_fwd_traits{hdim_q,
                                        hdim_v,
@@ -480,7 +482,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
                              hdim_v,
                              nhead,
                              nhead_k,
-                             NUM_SPLITS,
+                             num_splits,
                              scale_s,
                              scale_p,
                              scale_o,
@@ -505,7 +507,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
                              mask.right,
                              static_cast<ck_tile::index_t>(mask.type)};
     }();
-    std::cout << std::endl;
     float ave_time = fmha_fwd(fmha_traits, fmha_args, stream_config);
 
     if(ave_time < 0)
@@ -593,9 +594,9 @@ bool run(const ck_tile::ArgParser& arg_parser)
 
     // test
     ck_tile::HostTensor<LSEDataType> lse_acc_host_ref(
-        {NUM_SPLITS, shape_batch, nhead, shape_seqlen_q});
+        {num_splits, shape_batch, nhead, shape_seqlen_q});
     ck_tile::HostTensor<OaccDataType> o_acc_host_ref(
-        {NUM_SPLITS, shape_batch, nhead, shape_seqlen_q, hdim_v});
+        {num_splits, shape_batch, nhead, shape_seqlen_q, hdim_v});
 
     ck_tile::reference_mha_fwd_splitkv<SaccDataType, SMPLComputeDataType, PDataType>(
         q_host_view_bhsd,
@@ -611,7 +612,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
         opt_seqstart_k,
         p_compute_element_func);
 
-    std::cout << std::endl;
     {
         constexpr int MPerThread = 32;
 
@@ -622,7 +622,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
         for(int i = start_i; i < end_i; ++i)
         {
             lse_max(i - start_i) = -ck_tile::numeric<LSEDataType>::infinity();
-            for(int i_split = 0; i_split < NUM_SPLITS; ++i_split)
+            for(int i_split = 0; i_split < num_splits; ++i_split)
             {
                 if(lse_max(i - start_i) < lse_acc_host_ref(i_split, 0, 0, i))
                 {
@@ -637,7 +637,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
         for(int i = start_i; i < end_i; ++i)
         {
             lse_sum(i - start_i) = 0;
-            for(int i_split = 0; i_split < NUM_SPLITS; ++i_split)
+            for(int i_split = 0; i_split < num_splits; ++i_split)
             {
                 lse_sum(i - start_i) +=
                     ck_tile::exp(lse_acc_host_ref(i_split, 0, 0, i) - lse_max(i - start_i));
@@ -654,11 +654,11 @@ bool run(const ck_tile::ArgParser& arg_parser)
         }
 #endif
 #if defined(PRINT_LSE_SCALE)
-        ck_tile::HostTensor<LSEDataType> lse_scale({MPerThread, NUM_SPLITS});
+        ck_tile::HostTensor<LSEDataType> lse_scale({MPerThread, num_splits});
         for(int i = start_i; i < end_i; ++i)
         {
             printf("[POYENC][HOST] lse_scale[%2d] = ", i);
-            for(int i_split = 0; i_split < NUM_SPLITS; ++i_split)
+            for(int i_split = 0; i_split < num_splits; ++i_split)
             {
                 lse_scale(i - start_i, i_split) +=
                     ck_tile::exp(lse_acc_host_ref(i_split, 0, 0, i) - lse_logsum(i - start_i));
@@ -671,7 +671,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
         for(int i = start_i; i < end_i; ++i)
         {
             printf("[POYENC][HOST] lse_accum[%2d] = ", i);
-            for(int i_split = 0; i_split < NUM_SPLITS; ++i_split)
+            for(int i_split = 0; i_split < num_splits; ++i_split)
             {
                 printf("%11.7f", lse_acc_host_ref(i_split, 0, 0, i));
             }
