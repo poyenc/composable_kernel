@@ -87,7 +87,7 @@ float fmha_fwd_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
         std::cout << ", " << k_::GetName() << std::flush;
 
     float time_a = [&] {
-        auto [kargs, grids]                    = fmha_fwd_create_kargs_and_grids<k_>(a);
+        auto [kargs, grids]                    = fmha_fwd_splitkv_create_kargs_and_grids<k_>(a);
         constexpr dim3 blocks                  = k_::BlockSize();
         constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
         return ck_tile::launch_kernel<blocks.x, kBlockPerCu>(s, k_{}, grids, blocks, 0, kargs);
@@ -95,7 +95,7 @@ float fmha_fwd_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
 
     float time_b = [&] {
         using combine_k_      = fmha_splitkv_combine_kernel_0;
-        auto [kargs, grids]   = fmha_fwd_create_kargs_and_grids_combine<combine_k_>(a);
+        auto [kargs, grids]   = fmha_fwd_splitkv_combine_create_kargs_and_grids<combine_k_>(a);
         constexpr dim3 blocks = k_::BlockSize();
         constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
         return ck_tile::launch_kernel<blocks.x, kBlockPerCu>(

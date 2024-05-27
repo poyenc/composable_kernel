@@ -41,9 +41,10 @@ struct FmhaFwdSplitKVCombineKernel
         const void* o_acc_ptr;
         void* o_ptr;
 
-        ck_tile::index_t b;
-        ck_tile::index_t h;
+        ck_tile::index_t batch;
+        ck_tile::index_t nhead;
         ck_tile::index_t max_seqlen_q;
+
         ck_tile::index_t seqlen_q;
         ck_tile::index_t hdim_v;
         ck_tile::index_t num_splits;
@@ -92,8 +93,8 @@ struct FmhaFwdSplitKVCombineKernel
               const void* o_acc_ptr,
               void* lse_ptr,
               void* o_ptr,
-              ck_tile::index_t b,
-              ck_tile::index_t h,
+              ck_tile::index_t batch,
+              ck_tile::index_t nhead,
               ck_tile::index_t max_seqlen_q,
               ck_tile::index_t seqlen_q,
               ck_tile::index_t hdim_v,
@@ -108,8 +109,8 @@ struct FmhaFwdSplitKVCombineKernel
         Kargs kargs{{lse_acc_ptr,
                      o_acc_ptr,
                      o_ptr,
-                     b,
-                     h,
+                     batch,
+                     nhead,
                      max_seqlen_q,
                      seqlen_q,
                      hdim_v,
@@ -140,8 +141,8 @@ struct FmhaFwdSplitKVCombineKernel
               const void* o_acc_ptr,
               void* lse_ptr,
               void* o_ptr,
-              ck_tile::index_t b,
-              ck_tile::index_t h,
+              ck_tile::index_t batch,
+              ck_tile::index_t nhead,
               ck_tile::index_t max_seqlen_q,
               const void* seqstart_q_ptr,
               ck_tile::index_t hdim_v,
@@ -154,8 +155,8 @@ struct FmhaFwdSplitKVCombineKernel
         Kargs kargs{{lse_acc_ptr,
                      o_acc_ptr,
                      o_ptr,
-                     b,
-                     h,
+                     batch,
+                     nhead,
                      max_seqlen_q,
                      -1, // seqlen will be updated by another pointer
                      hdim_v,
@@ -234,9 +235,9 @@ struct FmhaFwdSplitKVCombineKernel
         else
         {
             batch_offset_lse_acc =
-                static_cast<long_index_t>(i_batch) * (kargs.h * kargs.max_seqlen_q);
-            batch_offset_o_acc =
-                static_cast<long_index_t>(i_batch) * (kargs.h * kargs.max_seqlen_q * kargs.hdim_v);
+                static_cast<long_index_t>(i_batch) * (kargs.nhead * kargs.max_seqlen_q);
+            batch_offset_o_acc = static_cast<long_index_t>(i_batch) *
+                                 (kargs.nhead * kargs.max_seqlen_q * kargs.hdim_v);
             if constexpr(kStoreLSE)
             {
                 batch_offset_lse = static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse;
@@ -261,7 +262,7 @@ struct FmhaFwdSplitKVCombineKernel
             const auto lse_acc_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 lse_acc_ptr,
                 make_tuple(kargs.num_splits, kargs.seqlen_q),
-                make_tuple(kargs.b * kargs.h * kargs.max_seqlen_q, 1),
+                make_tuple(kargs.batch * kargs.nhead * kargs.max_seqlen_q, 1),
                 number<8>{},
                 number<1>{});
 
@@ -275,7 +276,8 @@ struct FmhaFwdSplitKVCombineKernel
             const auto o_acc_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 o_acc_ptr,
                 make_tuple(kargs.num_splits, kargs.max_seqlen_q, kargs.hdim_v),
-                make_tuple(kargs.b * kargs.h * kargs.max_seqlen_q * kargs.hdim_v, kargs.hdim_v, 1),
+                make_tuple(
+                    kargs.batch * kargs.nhead * kargs.max_seqlen_q * kargs.hdim_v, kargs.hdim_v, 1),
                 number<MainPipeline::kAlignmentO>{},
                 number<1>{});
 

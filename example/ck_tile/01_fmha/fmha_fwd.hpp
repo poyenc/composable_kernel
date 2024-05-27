@@ -130,156 +130,144 @@ struct fmha_fwd_args
     ck_tile::index_t mask_type;
 };
 
-template <typename FmhaKernel>
-auto fmha_fwd_create_kargs_and_grids(fmha_fwd_args args)
+template <typename FmhaSplitKVKernel>
+auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_args args)
 {
     assert(args.nhead_q % args.nhead_k == 0);
     auto kargs = [&] {
         // create group mode kernel arguments
-        if constexpr(FmhaKernel::kIsGroupMode)
+        if constexpr(FmhaSplitKVKernel::kIsGroupMode)
         {
-            return FmhaKernel::MakeKargs(args.q_ptr,
-                                         args.k_ptr,
-                                         args.v_ptr,
-                                         args.bias_ptr,
-                                         args.lse_acc_ptr,
-                                         args.o_acc_ptr,
-                                         args.batch,
-                                         args.nhead,
-                                         args.max_seqlen_q,
-                                         args.seqstart_q_ptr,
-                                         args.seqstart_k_ptr,
-                                         args.seqlen_k_ptr,
-                                         args.hdim_q,
-                                         args.hdim_v,
-                                         args.nhead_q / args.nhead_k,
-                                         args.num_splits,
-                                         args.scale_s,
-                                         args.scale_p,
-                                         args.scale_o,
-                                         args.stride_q,
-                                         args.stride_k,
-                                         args.stride_v,
-                                         args.stride_bias,
-                                         args.nhead_stride_q,
-                                         args.nhead_stride_k,
-                                         args.nhead_stride_v,
-                                         args.nhead_stride_bias,
-                                         args.window_size_left,
-                                         args.window_size_right,
-                                         args.mask_type);
+            return FmhaSplitKVKernel::MakeKargs(args.q_ptr,
+                                                args.k_ptr,
+                                                args.v_ptr,
+                                                args.bias_ptr,
+                                                args.lse_acc_ptr,
+                                                args.o_acc_ptr,
+                                                args.batch,
+                                                args.nhead,
+                                                args.max_seqlen_q,
+                                                args.seqstart_q_ptr,
+                                                args.seqstart_k_ptr,
+                                                args.seqlen_k_ptr,
+                                                args.hdim_q,
+                                                args.hdim_v,
+                                                args.nhead_q / args.nhead_k,
+                                                args.num_splits,
+                                                args.scale_s,
+                                                args.scale_p,
+                                                args.stride_q,
+                                                args.stride_k,
+                                                args.stride_v,
+                                                args.stride_bias,
+                                                args.nhead_stride_q,
+                                                args.nhead_stride_k,
+                                                args.nhead_stride_v,
+                                                args.nhead_stride_bias,
+                                                args.window_size_left,
+                                                args.window_size_right,
+                                                args.mask_type);
         }
         else
         { // create batch mode kernel arguments
-            return FmhaKernel::MakeKargs(args.q_ptr,
-                                         args.k_ptr,
-                                         args.v_ptr,
-                                         args.bias_ptr,
-                                         args.lse_acc_ptr,
-                                         args.o_acc_ptr,
-                                         args.batch,
-                                         args.nhead,
-                                         args.max_seqlen_q,
-                                         args.seqlen_q,
-                                         args.seqlen_k,
-                                         args.hdim_q,
-                                         args.hdim_v,
-                                         args.nhead_q / args.nhead_k,
-                                         args.num_splits,
-                                         args.scale_s,
-                                         args.scale_p,
-                                         args.scale_o,
-                                         args.stride_q,
-                                         args.stride_k,
-                                         args.stride_v,
-                                         args.stride_bias,
-                                         args.nhead_stride_q,
-                                         args.nhead_stride_k,
-                                         args.nhead_stride_v,
-                                         args.nhead_stride_bias,
-                                         args.batch_stride_q,
-                                         args.batch_stride_k,
-                                         args.batch_stride_v,
-                                         args.batch_stride_bias,
-                                         args.window_size_left,
-                                         args.window_size_right,
-                                         args.mask_type);
+            return FmhaSplitKVKernel::MakeKargs(args.q_ptr,
+                                                args.k_ptr,
+                                                args.v_ptr,
+                                                args.bias_ptr,
+                                                args.lse_acc_ptr,
+                                                args.o_acc_ptr,
+                                                args.batch,
+                                                args.nhead,
+                                                args.max_seqlen_q,
+                                                args.seqlen_q,
+                                                args.seqlen_k,
+                                                args.hdim_q,
+                                                args.hdim_v,
+                                                args.nhead_q / args.nhead_k,
+                                                args.num_splits,
+                                                args.scale_s,
+                                                args.scale_p,
+                                                args.stride_q,
+                                                args.stride_k,
+                                                args.stride_v,
+                                                args.stride_bias,
+                                                args.nhead_stride_q,
+                                                args.nhead_stride_k,
+                                                args.nhead_stride_v,
+                                                args.nhead_stride_bias,
+                                                args.batch_stride_q,
+                                                args.batch_stride_k,
+                                                args.batch_stride_v,
+                                                args.batch_stride_bias,
+                                                args.window_size_left,
+                                                args.window_size_right,
+                                                args.mask_type);
         }
     }();
 
-    dim3 grids = FmhaKernel::GridSize(
+    dim3 grids = FmhaSplitKVKernel::GridSize(
         args.batch, args.nhead_q, args.max_seqlen_q, args.hdim_v, args.num_splits);
-#if defined(DEBUG_PRINT)
-    std::cout << "[POYENC] grid size: (" << static_cast<int>(grids.x) << ", "
-              << static_cast<int>(grids.y) << ", " << static_cast<int>(grids.z) << ")" << std::endl;
-#endif
     return ck_tile::make_tuple(kargs, grids);
 }
 
-template <typename FmhaKernel>
-auto fmha_fwd_create_kargs_and_grids_combine(fmha_fwd_args args)
+template <typename FmhaSplitKVCombineKernel>
+auto fmha_fwd_splitkv_combine_create_kargs_and_grids(fmha_fwd_args args)
 {
     assert(args.nhead_q % args.nhead_k == 0);
     auto kargs = [&] {
-// create group mode kernel arguments
-#if 0
-        if constexpr(FmhaKernel::kIsGroupMode)
+        // create group mode kernel argumentszs
+        if constexpr(FmhaSplitKVCombineKernel::kIsGroupMode)
         {
-            return FmhaKernel::MakeKargs(args.q_ptr,
-                                         args.k_ptr,
-                                         args.v_ptr,
-                                         args.bias_ptr,
-                                         args.lse_ptr,
-                                         args.o_ptr,
-                                         args.seqstart_q_ptr,
-                                         args.seqstart_k_ptr,
-                                         args.seqlen_k_ptr,
-                                         args.hdim_q,
-                                         args.hdim_v,
-                                         args.nhead_q / args.nhead_k,
-                                         args.num_splits,
-                                         args.scale_s,
-                                         args.scale_p,
-                                         args.scale_o,
-                                         args.stride_q,
-                                         args.stride_k,
-                                         args.stride_v,
-                                         args.stride_bias,
-                                         args.stride_o,
-                                         args.nhead_stride_q,
-                                         args.nhead_stride_k,
-                                         args.nhead_stride_v,
-                                         args.nhead_stride_bias,
-                                         args.nhead_stride_lse,
-                                         args.nhead_stride_o);
+            return FmhaSplitKVCombineKernel::MakeKargs(args.q_ptr,
+                                                       args.k_ptr,
+                                                       args.v_ptr,
+                                                       args.bias_ptr,
+                                                       args.lse_ptr,
+                                                       args.o_ptr,
+                                                       args.seqstart_q_ptr,
+                                                       args.seqstart_k_ptr,
+                                                       args.seqlen_k_ptr,
+                                                       args.hdim_q,
+                                                       args.hdim_v,
+                                                       args.nhead_q / args.nhead_k,
+                                                       args.num_splits,
+                                                       args.scale_s,
+                                                       args.scale_p,
+                                                       args.scale_o,
+                                                       args.stride_q,
+                                                       args.stride_k,
+                                                       args.stride_v,
+                                                       args.stride_bias,
+                                                       args.stride_o,
+                                                       args.nhead_stride_q,
+                                                       args.nhead_stride_k,
+                                                       args.nhead_stride_v,
+                                                       args.nhead_stride_bias,
+                                                       args.nhead_stride_lse,
+                                                       args.nhead_stride_o);
         }
         else
-#endif
         { // create batch mode kernel arguments
-            return FmhaKernel::MakeKargs(args.lse_acc_ptr,
-                                         args.o_acc_ptr,
-                                         args.lse_ptr,
-                                         args.o_ptr,
-                                         args.batch,
-                                         args.nhead,
-                                         args.max_seqlen_q,
-                                         args.seqlen_q,
-                                         args.hdim_v,
-                                         args.num_splits,
-                                         args.scale_o,
-                                         args.stride_o,
-                                         args.nhead_stride_lse,
-                                         args.nhead_stride_o,
-                                         args.batch_stride_lse,
-                                         args.batch_stride_o);
+            return FmhaSplitKVCombineKernel::MakeKargs(args.lse_acc_ptr,
+                                                       args.o_acc_ptr,
+                                                       args.lse_ptr,
+                                                       args.o_ptr,
+                                                       args.batch,
+                                                       args.nhead,
+                                                       args.max_seqlen_q,
+                                                       args.seqlen_q,
+                                                       args.hdim_v,
+                                                       args.num_splits,
+                                                       args.scale_o,
+                                                       args.stride_o,
+                                                       args.nhead_stride_lse,
+                                                       args.nhead_stride_o,
+                                                       args.batch_stride_lse,
+                                                       args.batch_stride_o);
         }
     }();
 
-    dim3 grids = FmhaKernel::GridSize(args.batch, args.nhead_q, args.max_seqlen_q);
-#if defined(DEBUG_PRINT)
-    std::cout << "[POYENC] grid size: (" << static_cast<int>(grids.x) << ", "
-              << static_cast<int>(grids.y) << ", " << static_cast<int>(grids.z) << ")" << std::endl;
-#endif
+    dim3 grids = FmhaSplitKVCombineKernel::GridSize(args.batch, args.nhead_q, args.max_seqlen_q);
     return ck_tile::make_tuple(kargs, grids);
 }
 
