@@ -8,7 +8,7 @@
 namespace ck_tile {
 
 template <typename BlockFmhaShape_>
-struct FmhaFwdTilePartitioner
+struct FmhaFwdSplitKVTilePartitioner
 {
     using BlockFmhaShape = ck_tile::remove_cvref_t<BlockFmhaShape_>;
 
@@ -21,22 +21,25 @@ struct FmhaFwdTilePartitioner
     __host__ static constexpr auto GridSize(ck_tile::index_t batch_size_,
                                             ck_tile::index_t nhead_,
                                             ck_tile::index_t seqlen_q_,
-                                            ck_tile::index_t hdim_v_)
+                                            ck_tile::index_t hdim_v_,
+                                            ck_tile::index_t num_splits)
     {
         // TODO: this may need tuning
         return dim3(ck_tile::integer_divide_ceil(seqlen_q_, kM0) *
                         ck_tile::integer_divide_ceil(hdim_v_, kN1),
-                    nhead_,
+                    nhead_ * num_splits,
                     batch_size_);
     }
 
-    CK_TILE_DEVICE auto operator()(ck_tile::index_t /*seqlen_q*/, ck_tile::index_t hdim_v)
+    CK_TILE_DEVICE auto
+    operator()(ck_tile::index_t /*seqlen_q*/, ck_tile::index_t hdim_v, ck_tile::index_t num_splits)
     {
         // const index_t num_tile_m0 = seqlen_q / kM0;
         const index_t num_tile_n1 = ck_tile::integer_divide_ceil(hdim_v, kN1);
 
         const index_t i_block = blockIdx.x;
-        const index_t i_nhead = blockIdx.y;
+        const index_t i_nhead = blockIdx.y / num_splits;
+        const index_t i_split = blockIdx.y - (i_nhead * num_splits);
         const index_t i_batch = blockIdx.z;
 
         const auto f = [](index_t dividend, index_t divisor) {
@@ -47,7 +50,7 @@ struct FmhaFwdTilePartitioner
 
         const auto [i_tile_m, i_tile_n] = f(i_block, num_tile_n1);
 
-        return ck_tile::make_tuple(i_tile_m, i_tile_n, i_nhead, i_batch);
+        return ck_tile::make_tuple(i_tile_m, i_tile_n, i_split, i_nhead, i_batch);
     }
 };
 

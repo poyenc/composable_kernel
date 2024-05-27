@@ -4,12 +4,12 @@
 #pragma once
 
 #include "ck_tile/core.hpp"
-#include "ck_tile/ops/fmha/pipeline/block_fmha_pipeline_qr_ks_vs_default_policy.hpp"
+#include "ck_tile/ops/fmha/pipeline/block_fmha_fwd_splitkv_combine_pipeline_default_policy.hpp"
 #include "ck_tile/ops/reduce/block/block_reduce.hpp"
 
 namespace ck_tile {
 
-template <typename Problem_, typename Policy_ = BlockFmhaPipelineQRKSVSDefaultPolicy>
+template <typename Problem_, typename Policy_ = BlockFmhaFwdSplitKVCombinePipelineDefaultPolicy>
 struct BlockFmhaFwdSplitKVCombinePipeline
 {
     using Problem = remove_cvref_t<Problem_>;

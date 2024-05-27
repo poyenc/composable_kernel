@@ -38,7 +38,7 @@ using fmha_pipeline_problem_0 =
                                       fmha_mask_0,
                                       fmha_trait_0>;
 
-using fmha_pipeline_0 = ck_tile::BlockFmhaPipelineQRKSVS<fmha_pipeline_problem_0>;
+using fmha_pipeline_0 = ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVS<fmha_pipeline_problem_0>;
 using fmha_fwd_splitkv_combine_pipeline_0 =
     ck_tile::BlockFmhaFwdSplitKVCombinePipeline<fmha_pipeline_problem_0>;
 
@@ -48,8 +48,10 @@ using fmha_epilogue_0 = ck_tile::Default2DEpilogue<
                                       false,
                                       false>>;
 
-using fmha_kernel_0 = ck_tile::
-    FmhaFwdKernel<ck_tile::FmhaFwdTilePartitioner<fmha_shape_0>, fmha_pipeline_0, fmha_epilogue_0>;
+using fmha_kernel_0 =
+    ck_tile::FmhaFwdSplitKVKernel<ck_tile::FmhaFwdSplitKVTilePartitioner<fmha_shape_0>,
+                                  fmha_pipeline_0,
+                                  fmha_epilogue_0>;
 using fmha_splitkv_combine_kernel_0 = ck_tile::FmhaFwdSplitKVCombineKernel<
     ck_tile::FmhaFwdSplitKVCombineTilePartitioner<fmha_shape_0>,
     fmha_fwd_splitkv_combine_pipeline_0,
