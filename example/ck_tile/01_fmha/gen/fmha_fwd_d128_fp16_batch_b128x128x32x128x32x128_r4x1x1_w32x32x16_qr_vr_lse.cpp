@@ -38,7 +38,8 @@ using fmha_pipeline_problem_0 =
                                       fmha_mask_0,
                                       fmha_trait_0>;
 
-using fmha_pipeline_0 = ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVS<fmha_pipeline_problem_0>;
+using fmha_fwd_splitkv_pipeline_0 =
+    ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVS<fmha_pipeline_problem_0>;
 using fmha_fwd_splitkv_combine_pipeline_0 =
     ck_tile::BlockFmhaFwdSplitKVCombinePipeline<fmha_pipeline_problem_0>;
 
@@ -48,9 +49,9 @@ using fmha_epilogue_0 = ck_tile::Default2DEpilogue<
                                       false,
                                       false>>;
 
-using fmha_kernel_0 =
+using fmha_fwd_splitkv_kernel_0 =
     ck_tile::FmhaFwdSplitKVKernel<ck_tile::FmhaFwdSplitKVTilePartitioner<fmha_shape_0>,
-                                  fmha_pipeline_0,
+                                  fmha_fwd_splitkv_pipeline_0,
                                   fmha_epilogue_0>;
 using fmha_splitkv_combine_kernel_0 = ck_tile::FmhaFwdSplitKVCombineKernel<
     ck_tile::FmhaFwdSplitKVCombineTilePartitioner<fmha_shape_0>,
@@ -80,9 +81,9 @@ using trait_0 = fmha_fwd_traits_<128,
 #include <iostream>
 
 template <>
-float fmha_fwd_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
+float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
 {
-    using k_ = fmha_kernel_0;
+    using k_ = fmha_fwd_splitkv_kernel_0;
     if(s.log_level_ > 0)
         std::cout << ", " << k_::GetName() << std::flush;
 

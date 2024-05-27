@@ -35,7 +35,7 @@ float fmha_fwd(fmha_fwd_traits t, fmha_fwd_args a, const ck_tile::stream_config&
                                                 false,
                                                 false,
                                                 false>;
-                return fmha_fwd_<trait_>(s, a);
+                return fmha_fwd_dispatch<trait_>(s, a);
             }
         }
     }
