@@ -274,7 +274,7 @@ struct FmhaFwdSplitKVCombineKernel
         auto o_acc_dram = [&]() {
             const auto o_acc_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 o_acc_ptr,
-                make_tuple(kargs.num_splits, kargs.seqlen_q, kargs.hdim_v),
+                make_tuple(kargs.num_splits, kargs.max_seqlen_q, kargs.hdim_v),
                 make_tuple(kargs.b * kargs.h * kargs.max_seqlen_q * kargs.hdim_v, kargs.hdim_v, 1),
                 number<MainPipeline::kAlignmentO>{},
                 number<1>{});
@@ -309,7 +309,7 @@ struct FmhaFwdSplitKVCombineKernel
             [&]() {
                 return make_tuple(number<MainPipeline::kM0>{}, number<MainPipeline::kN1>{});
             }(),
-            {i_m0 * kargs.num_splits, 0});
+            {i_m0, 0});
 
         // LSE DRAM window
         auto lse_dram_window = [&, i_nhead_ = i_nhead]() {
@@ -350,7 +350,8 @@ struct FmhaFwdSplitKVCombineKernel
                     identity{},                                          // lse_element_func
                     composes(saturates<fp8_t>{}, scales{kargs.scale_o}), // o_acc_element_func
                     smem_ptr,
-                    kargs.num_splits);
+                    kargs.num_splits,
+                    kargs.max_seqlen_q);
             }
             else
             {
@@ -358,7 +359,8 @@ struct FmhaFwdSplitKVCombineKernel
                                       o_acc_dram_window,
                                       lse_dram_window,
                                       smem_ptr,
-                                      kargs.num_splits);
+                                      kargs.num_splits,
+                                      kargs.max_seqlen_q);
             }
         }();
 

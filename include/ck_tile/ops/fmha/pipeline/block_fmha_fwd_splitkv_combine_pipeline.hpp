@@ -90,7 +90,8 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                const LSEElementFunction& lse_element_func,
                const OaccElementFunction& o_acc_element_func,
                void* smem_ptr,
-               index_t num_splits) const
+               index_t num_splits,
+               index_t max_seqlen_q) const
     {
         LSEDataType* lse_acc_lds_ptr =
             static_cast<LSEDataType*>(static_cast<void*>(static_cast<char*>(smem_ptr)));
@@ -375,7 +376,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         auto o_acc = make_static_distributed_tensor<OaccDataType>(o_acc_dist); // Pcompute{j}
         clear_tile(o_acc);
 
-#if 1
+        // [POYENC] added
         for(index_t i_split = 0; i_split < num_splits; ++i_split)
         {
             auto o_tile = load_tile(o_acc_dram_window);
@@ -399,9 +400,8 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                 });
             }
 
-            move_tile_window(o_acc_dram_window, {kM0, 0});
+            move_tile_window(o_acc_dram_window, {max_seqlen_q, 0});
         }
-#endif
 
         return o_acc;
     }
@@ -413,7 +413,8 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                                         const OaccDramBlockWindow& o_acc_dram_block_window,
                                         LSEDramBlockWindow& lse_dram_block_window,
                                         void* smem_ptr,
-                                        index_t num_splits) const
+                                        index_t num_splits,
+                                        index_t max_seqlen_q) const
     {
         return operator()(lse_acc_dram_block_window,
                           o_acc_dram_block_window,
@@ -421,7 +422,8 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                           identity{},
                           identity{},
                           smem_ptr,
-                          num_splits);
+                          num_splits,
+                          max_seqlen_q);
     }
 };
 

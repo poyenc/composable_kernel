@@ -47,7 +47,7 @@ if(FMHA_FWD_FAST_EXP2)
     # -g
     --save-temps
     -Wno-gnu-line-marker
-    -DNUM_SPLITS=16
+    -DMAX_NUM_SPLITS=16
     # -DTID=0
     # -DENABLE_DEBUG_STMTS
     # -DDEBUG_PRINT
