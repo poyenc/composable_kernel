@@ -47,7 +47,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
     static constexpr bool kPadHeadDimQ = Problem::kPadHeadDimQ;
     static constexpr bool kPadHeadDimV = Problem::kPadHeadDimV;
     static constexpr bool kHasBias     = Problem::kHasBias;
-    static constexpr bool kStoreLSE    = Problem::kStoreLSE;
+    static constexpr bool kStoreLSE    = Problem::kStoreLSE; // not used in this pipeline
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -219,15 +219,11 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         {
             if(num_total_loop <= 0)
             {
-                if constexpr(kStoreLSE)
-                {
-                    auto lse =
-                        make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
+                auto lse = make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
 
-                    set_tile(lse, -numeric<SMPLComputeDataType>::infinity());
+                set_tile(lse, -numeric<SMPLComputeDataType>::infinity());
 
-                    store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse));
-                }
+                store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse));
 
                 // Note: here occ are all cleard, return it
                 // Note: q loaded but no fence, ignore it.
@@ -536,29 +532,26 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         } while(++i_total_loops < num_total_loop);
 
         // store lse
-        if constexpr(kStoreLSE)
-        {
-            auto lse = make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
+        auto lse = make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
 
-            constexpr auto lse_spans = decltype(lse)::get_distributed_spans();
-            sweep_tile_span(lse_spans[number<0>{}], [&, m_ = m, l_ = l](auto idx0) {
-                constexpr auto i_idx = make_tuple(idx0);
+        constexpr auto lse_spans = decltype(lse)::get_distributed_spans();
+        sweep_tile_span(lse_spans[number<0>{}], [&, m_ = m, l_ = l](auto idx0) {
+            constexpr auto i_idx = make_tuple(idx0);
 #if CK_TILE_FMHA_FWD_FAST_EXP2
-                if constexpr(kHasBias)
-                {
-                    lse(i_idx) = m_[i_idx] / C_LOG2E + log(l_[i_idx]);
-                }
-                else
-                {
-                    lse(i_idx) = m_[i_idx] * scale_s / C_LOG2E + log(l_[i_idx]);
-                }
+            if constexpr(kHasBias)
+            {
+                lse(i_idx) = m_[i_idx] / C_LOG2E + log(l_[i_idx]);
+            }
+            else
+            {
+                lse(i_idx) = m_[i_idx] * scale_s / C_LOG2E + log(l_[i_idx]);
+            }
 #else
-                lse(i_idx) = m_[i_idx] + log(l_[i_idx]);
+            lse(i_idx) = m_[i_idx] + log(l_[i_idx]);
 #endif
-            });
+        });
 
-            store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse));
-        }
+        store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse));
 
         // finally, O
         constexpr auto o_spans = decltype(o_acc)::get_distributed_spans();

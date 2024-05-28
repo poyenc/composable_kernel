@@ -322,10 +322,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
             : std::array<ck_tile::index_t, 4>{1, 1, 1, 1} /* dummy shape for simplifying code */);
 
     // self define lse data layout as [shape_batch, nhead, shape_seqlen_q]
-    ck_tile::HostTensor<LSEDataType> lse_acc_host(
-        store_lse ? std::array<ck_tile::index_t, 4>{num_splits, shape_batch, nhead, shape_seqlen_q}
-                  : std::array<ck_tile::index_t, 4>{
-                        num_splits, 1, 1, 1} /* dummy shape for simplifying code */);
+    ck_tile::HostTensor<LSEDataType> lse_acc_host({num_splits, shape_batch, nhead, shape_seqlen_q});
 
     ck_tile::HostTensor<LSEDataType> lse_host(
         store_lse
