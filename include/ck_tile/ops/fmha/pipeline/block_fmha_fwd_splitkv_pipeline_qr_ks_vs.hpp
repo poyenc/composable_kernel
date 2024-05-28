@@ -258,8 +258,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
 
         static_assert(2 <= k0_loops);
         static_assert(1 <= k1_loops);
-        do
-        {
+        auto loop_body = [&, seqlen_k_end_ = seqlen_k_end](auto is_last_iteration) {
             // STAGE 1, QK gemm
             auto k_dram_window = make_tile_window(
                 k_dram_block_window.get_bottom_tensor_view(),
@@ -353,18 +352,14 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             }
             move_tile_window(bias_dram_window, {0, kN0});
 
-            // [POYENC] added
+            if constexpr(is_last_iteration)
             {
                 const auto k_origin = k_dram_block_window.get_window_origin();
-                set_tile_if(s_acc,
-                            -numeric<SMPLComputeDataType>::infinity(),
-                            [&, seqlen_k_end_ = seqlen_k_end](auto tile_idx) {
-                                const auto row =
-                                    q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
-                                const auto col =
-                                    k_origin.at(number<0>{}) + tile_idx.at(number<1>{});
-                                return seqlen_k_end_ <= col;
-                            });
+                set_tile_if(s_acc, -numeric<SMPLComputeDataType>::infinity(), [&](auto tile_idx) {
+                    const auto row = q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
+                    const auto col = k_origin.at(number<0>{}) + tile_idx.at(number<1>{});
+                    return seqlen_k_end_ <= col;
+                });
             }
 
             if constexpr(kPadSeqLenK || FmhaMask::IsMasking)
@@ -529,7 +524,13 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                        v_lds_window);
                 block_sync_lds();
             }
-        } while(++i_total_loops < num_total_loop);
+        };
+
+        do
+        {
+            loop_body(std::false_type{});
+        } while(++i_total_loops < num_total_loop - 1);
+        loop_body(std::true_type{});
 
         // store lse
         auto lse = make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
