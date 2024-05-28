@@ -840,12 +840,6 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
 
         constexpr index_t MIterPerWarp = MPerBlock / (MWarp * WG::kM);
         constexpr index_t NIterPerWarp = NPerBlock / (NWarp * WG::kN);
-        static_assert(MWarp == 4);
-        static_assert(NWarp == 1);
-        static_assert(MPerBlock == 128);
-        static_assert(NPerBlock == 128);
-        static_assert(MIterPerWarp == 1);
-        static_assert(NIterPerWarp == 4);
 
         // Construct C-Block-HostTensor
         constexpr auto c_block_outer_dstr_encoding = tile_distribution_encoding<
@@ -971,7 +965,6 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
 
         constexpr index_t NumElements = (kMPerBlock * kNPerBlock);
 
-        static_assert(kBlockSize < NumElements);
         if constexpr(NumElements < kBlockSize) {}
         else
         {
@@ -1009,8 +1002,6 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
     template <typename Problem>
     CK_TILE_HOST_DEVICE static constexpr auto MakeLSEaccTDramTileDistribution()
     {
-        using LSEDataType = remove_cvref_t<typename Problem::LSEDataType>;
-
         constexpr index_t kBlockSize = 256;
 
         constexpr index_t kNPerBlock = max(Problem::kMaxSplits, get_warp_size());
@@ -1022,11 +1013,6 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
         if constexpr(NumElements < kBlockSize) {}
         else
         {
-            static_assert(kNPerBlock == 64);
-            static_assert(kMPerBlock == 128);
-
-            static_assert(sizeof(LSEDataType) == 4);
-
             constexpr index_t NThreads   = get_warp_size();       // 64
             constexpr index_t NPerThread = kNPerBlock / NThreads; // 1
 
