@@ -968,9 +968,6 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
         if constexpr(NumElements < kBlockSize) {}
         else
         {
-            static_assert(kNPerBlock == 128);
-            static_assert(kMPerBlock == 16);
-
             static_assert(sizeof(LSEDataType) == 4);
 
             constexpr index_t NPerThread = 16 / sizeof(LSEDataType); //  4
@@ -980,10 +977,6 @@ struct BlockFmhaPipelineQXKSVSCustomPolicy : BlockFmhaPipelineQXCustomPolicy<QLo
             constexpr index_t MThreadsPerWarp = get_warp_size() / NThreads;                  //  2
             constexpr index_t TotalWarps      = kBlockSize / get_warp_size();                //  4
             constexpr index_t MPerThread      = kMPerBlock / (TotalWarps * MThreadsPerWarp); //  2
-            static_assert(1 <= MPerThread);
-            static_assert(MThreadsPerWarp == 2);
-            static_assert(TotalWarps == 4);
-            static_assert(MPerThread == 2);
 
             static_assert(NThreads * NPerThread == kNPerBlock);
             static_assert(MPerThread * TotalWarps * MThreadsPerWarp == kMPerBlock);
