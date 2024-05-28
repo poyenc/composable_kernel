@@ -29,7 +29,12 @@ target_include_directories(${EXAMPLE_FMHA_FWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR}
 # target_sources(${EXAMPLE_FMHA_FWD} PRIVATE ${FMHA_FWD_GEN_BLOBS})
 target_sources(${EXAMPLE_FMHA_FWD} PRIVATE 
   gen/fmha_fwd_api.cpp
-  gen/fmha_fwd_d128_fp16_batch_b128x128x32x128x32x128_r4x1x1_w32x32x16_qr_vr_lse.cpp
+  gen/fmha_fwd_d128_fp16_batch_b128x128x32x128x32x128_r4x1x1_w32x32x16_qr_vr.cpp
+  gen/fmha_fwd_d256_fp16_batch_b128x128x32x256x32x256_r4x1x1_w32x32x16_qr_vr.cpp
+  gen/fmha_fwd_d64_fp16_batch_b128x64x32x64x32x64_r4x1x1_w32x32x16_qr_vr.cpp
+  gen/fmha_fwd_splitkv_d128_fp16_batch_b128x128x32x128x32x128_r4x1x1_w32x32x16_qr_vr.cpp
+  gen/fmha_fwd_splitkv_d256_fp16_batch_b128x128x32x256x32x256_r4x1x1_w32x32x16_qr_vr.cpp
+  gen/fmha_fwd_splitkv_d64_fp16_batch_b128x64x32x64x32x64_r4x1x1_w32x32x16_qr_vr.cpp
 )
 
 # NOTE: this is dangerous since will change the whole kernel to flush denormals

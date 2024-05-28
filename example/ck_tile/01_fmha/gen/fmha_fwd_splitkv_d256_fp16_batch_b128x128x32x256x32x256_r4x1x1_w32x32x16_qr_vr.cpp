@@ -6,7 +6,7 @@
 
 using fmha_dtype_0 = ck_tile::fp16_t;
 
-using fmha_block_tile_0  = ck_tile::sequence<128, 128, 32, 128, 32, 128>;
+using fmha_block_tile_0  = ck_tile::sequence<128, 128, 32, 256, 32, 256>;
 using fmha_block_warps_0 = ck_tile::sequence<4, 1, 1>;
 using fmha_warp_tile_0   = ck_tile::sequence<32, 32, 16>;
 
@@ -18,7 +18,7 @@ using fmha_shape_0 = ck_tile::TileFmhaShape<fmha_block_tile_0,
                                             true>;
 
 using fmha_trait_0 =
-    ck_tile::TileFmhaTraits<false, false, false, false, false, true, false, -1, MAX_NUM_SPLITS>;
+    ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1, MAX_NUM_SPLITS>;
 
 using fmha_mask_0 = ck_tile::SimplifiedGenericAttentionMask<false>;
 
@@ -58,20 +58,20 @@ using fmha_splitkv_combine_kernel_0 = ck_tile::FmhaFwdSplitKVCombineKernel<
     fmha_fwd_splitkv_combine_pipeline_0,
     fmha_epilogue_0>;
 
-using trait_0 = fmha_fwd_traits_<128,
+using trait_0 = fmha_fwd_traits_<256,
                                  ck_tile::fp16_t,
                                  false,
                                  128,
                                  128,
                                  32,
-                                 128,
+                                 256,
                                  32,
-                                 128,
+                                 256,
                                  true,
                                  ck_tile::BlockFmhaPipelineEnum::QRKSVS,
                                  fmha_mask_0,
                                  false,
-                                 true,
+                                 false,
                                  false,
                                  false,
                                  false,
