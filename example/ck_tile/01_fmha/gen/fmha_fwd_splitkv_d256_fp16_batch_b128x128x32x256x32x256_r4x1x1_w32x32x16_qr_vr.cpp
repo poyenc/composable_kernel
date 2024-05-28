@@ -17,12 +17,12 @@ using fmha_shape_0 = ck_tile::TileFmhaShape<fmha_block_tile_0,
                                             fmha_warp_tile_0,
                                             true>;
 
-using fmha_trait_0 =
-    ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1, MAX_NUM_SPLITS>;
+using fmha_fwd_splitkv_trait_0 =
+    ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1>;
 
 using fmha_mask_0 = ck_tile::SimplifiedGenericAttentionMask<false>;
 
-using fmha_pipeline_problem_0 =
+using fmha_fwd_splitkv_pipeline_problem_0 =
     ck_tile::BlockFmhaPipelineProblem<typename FmhaFwdTypeConfig<fmha_dtype_0>::QDataType,
                                       typename FmhaFwdTypeConfig<fmha_dtype_0>::KDataType,
                                       typename FmhaFwdTypeConfig<fmha_dtype_0>::VDataType,
@@ -36,12 +36,10 @@ using fmha_pipeline_problem_0 =
                                       fmha_shape_0,
                                       false,
                                       fmha_mask_0,
-                                      fmha_trait_0>;
+                                      fmha_fwd_splitkv_trait_0>;
 
 using fmha_fwd_splitkv_pipeline_0 =
-    ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVS<fmha_pipeline_problem_0>;
-using fmha_fwd_splitkv_combine_pipeline_0 =
-    ck_tile::BlockFmhaFwdSplitKVCombinePipeline<fmha_pipeline_problem_0>;
+    ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVS<fmha_fwd_splitkv_pipeline_problem_0>;
 
 using fmha_epilogue_0 = ck_tile::Default2DEpilogue<
     ck_tile::Default2DEpilogueProblem<typename FmhaFwdTypeConfig<ck_tile::fp16_t>::OaccDataType,
@@ -53,10 +51,57 @@ using fmha_fwd_splitkv_kernel_0 =
     ck_tile::FmhaFwdSplitKVKernel<ck_tile::FmhaFwdSplitKVTilePartitioner<fmha_shape_0>,
                                   fmha_fwd_splitkv_pipeline_0,
                                   fmha_epilogue_0>;
-using fmha_splitkv_combine_kernel_0 = ck_tile::FmhaFwdSplitKVCombineKernel<
-    ck_tile::FmhaFwdSplitKVCombineTilePartitioner<fmha_shape_0>,
-    fmha_fwd_splitkv_combine_pipeline_0,
-    fmha_epilogue_0>;
+
+/// [POYENC] added for combine
+namespace detail {
+template <ck_tile::index_t kMaxSplits>
+auto get_splitkv_combine_kernel()
+{
+    using fmha_fwd_splitkv_combine_trait_0 =
+        ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1, kMaxSplits>;
+
+    using fmha_fwd_splitkv_combine_pipeline_problem_0 = ck_tile::BlockFmhaPipelineProblem<
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::QDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::KDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::VDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::SaccDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::SMPLComputeDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::BiasDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::LSEDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::PDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::OaccDataType,
+        typename FmhaFwdTypeConfig<fmha_dtype_0>::ODataType,
+        fmha_shape_0,
+        false,
+        fmha_mask_0,
+        fmha_fwd_splitkv_combine_trait_0>;
+
+    using fmha_fwd_splitkv_combine_pipeline_0 =
+        ck_tile::BlockFmhaFwdSplitKVCombinePipeline<fmha_fwd_splitkv_combine_pipeline_problem_0>;
+
+    using fmha_splitkv_combine_kernel_0 = ck_tile::FmhaFwdSplitKVCombineKernel<
+        ck_tile::FmhaFwdSplitKVCombineTilePartitioner<fmha_shape_0>,
+        fmha_fwd_splitkv_combine_pipeline_0,
+        fmha_epilogue_0>;
+
+    return fmha_splitkv_combine_kernel_0{};
+}
+} // namespace detail
+
+template <ck_tile::index_t kMaxSplits>
+using get_splitkv_combine_kernel_t = decltype(detail::get_splitkv_combine_kernel<kMaxSplits>());
+
+template <ck_tile::index_t kMaxSplits>
+float launch_splitkv_combine_kernel(const ck_tile::stream_config& s, fmha_fwd_args a)
+{
+    using combine_k_      = get_splitkv_combine_kernel_t<kMaxSplits>;
+    auto [kargs, grids]   = fmha_fwd_splitkv_combine_create_kargs_and_grids<combine_k_>(a);
+    constexpr dim3 blocks = combine_k_::BlockSize();
+    constexpr ck_tile::index_t kBlockPerCu = combine_k_::kBlockPerCu;
+    return ck_tile::launch_kernel<blocks.x, kBlockPerCu>(s, combine_k_{}, grids, blocks, 0, kargs);
+}
+
+#include <iostream>
 
 using trait_0 = fmha_fwd_traits_<256,
                                  ck_tile::fp16_t,
@@ -78,8 +123,6 @@ using trait_0 = fmha_fwd_traits_<256,
                                  false,
                                  false>;
 
-#include <iostream>
-
 template <>
 float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
 {
@@ -95,13 +138,29 @@ float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args 
     }();
 
     float time_b = [&] {
-        using combine_k_      = fmha_splitkv_combine_kernel_0;
-        auto [kargs, grids]   = fmha_fwd_splitkv_combine_create_kargs_and_grids<combine_k_>(a);
-        constexpr dim3 blocks = k_::BlockSize();
-        constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
-        return ck_tile::launch_kernel<blocks.x, kBlockPerCu>(
-            s, combine_k_{}, grids, blocks, 0, kargs);
+#if 0
+        if (a.num_splits <= 2) {
+            return launch_splitkv_combine_kernel<2>(s, a);
+        } else if (a.num_splits <= 4) {
+            return launch_splitkv_combine_kernel<4>(s, a);
+        } else if (a.num_splits <= 8) {
+            return launch_splitkv_combine_kernel<8>(s, a);
+        } else if (a.num_splits <= 16) {
+            return launch_splitkv_combine_kernel<16>(s, a);
+        } else if (a.num_splits <= 32) {
+            return launch_splitkv_combine_kernel<32>(s, a);
+        } else if (a.num_splits <= 64) {
+            return launch_splitkv_combine_kernel<64>(s, a);
+        } else if (a.num_splits <= 128) {
+            return launch_splitkv_combine_kernel<128>(s, a);
+        }
+        return 0.f;
+#else
+        return launch_splitkv_combine_kernel<MAX_NUM_SPLITS>(s, a);
+#endif
     }();
+
+    printf("\n[POYENC][HOST] time for split: %11.7f, tile for combine: %11.7f\n", time_a, time_b);
 
     return time_a + time_b;
 }
