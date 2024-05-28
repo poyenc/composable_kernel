@@ -165,11 +165,12 @@ inline int override_num_splits_if_necessary(int batch_size,
     {
         return num_splits;
     }
+
     const int kM0 = 64;
-    const int kN1 = (head_size <= 64 ? 256 : (head_size <= 128 ? 128 : 64));
+    const int kN0 = (head_size <= 64 ? 256 : (head_size <= 128 ? 128 : 64));
 
     const int num_m_blocks = ck_tile::integer_divide_ceil(max_seqlen_q, kM0);
-    const int num_n_blocks = ck_tile::integer_divide_ceil(max_seqlen_k, kN1);
+    const int num_n_blocks = ck_tile::integer_divide_ceil(max_seqlen_k, kN0);
 
     if(p_dropout == 0.0f)
     { // SplitKV is not implemented for dropout
