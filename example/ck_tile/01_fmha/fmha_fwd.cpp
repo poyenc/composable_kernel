@@ -188,7 +188,8 @@ bool run(const ck_tile::ArgParser& arg_parser)
             return false;
         }
     }
-    int num_splits = arg_parser.get_int("num_splits");
+    int num_splits = arg_parser.get_int(
+        "num_splits"); // we will override num_splits according to other command-line arguments
 
     float range_q = arg_parser.get_float("range_q");
     float range_k = arg_parser.get_float("range_k");
@@ -287,17 +288,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
             return std::array<ck_tile::index_t, 4>{b, s, h, d};
     };
 
-    auto get_lengths2 = [&](bool permute,
-                            ck_tile::index_t b /*batch*/,
-                            ck_tile::index_t h /*nhead*/,
-                            ck_tile::index_t s /*seqlen*/,
-                            ck_tile::index_t d /*hdim*/) {
-        if(permute)
-            return std::array<ck_tile::index_t, 5>{num_splits, b, h, s, d};
-        else
-            return std::array<ck_tile::index_t, 5>{num_splits, b, s, h, d};
-    };
-
     bool is_v_rowmajor = vlayout == std::string("r");
 
     // host memory for storing all the tensor elements
@@ -306,6 +296,9 @@ bool run(const ck_tile::ArgParser& arg_parser)
         (mode == mode_enum::batch ? seqlen_q : seqstart_q_host.back());
     const ck_tile::index_t shape_seqlen_k =
         (mode == mode_enum::batch ? seqlen_k : seqstart_k_host.back());
+
+    num_splits = override_num_splits_if_necessary(
+        shape_batch, nhead, hdim_v, shape_seqlen_k, shape_seqlen_q, 0.0, num_splits);
 
     ck_tile::HostTensor<QDataType> q_host(
         get_lengths(i_perm, shape_batch, nhead, shape_seqlen_q, hdim_q));
@@ -322,15 +315,23 @@ bool run(const ck_tile::ArgParser& arg_parser)
             : std::array<ck_tile::index_t, 4>{1, 1, 1, 1} /* dummy shape for simplifying code */);
 
     // self define lse data layout as [shape_batch, nhead, shape_seqlen_q]
-    ck_tile::HostTensor<LSEDataType> lse_acc_host({num_splits, shape_batch, nhead, shape_seqlen_q});
+    ck_tile::HostTensor<LSEDataType> lse_acc_host(
+        1 < num_splits
+            ? std::array<ck_tile::index_t, 4>{num_splits, shape_batch, nhead, shape_seqlen_q}
+            : std::array<ck_tile::index_t, 4>{1, 1, 1, 1});
 
     ck_tile::HostTensor<LSEDataType> lse_host(
         store_lse
             ? std::array<ck_tile::index_t, 3>{shape_batch, nhead, shape_seqlen_q}
             : std::array<ck_tile::index_t, 3>{1, 1, 1} /* dummy shape for simplifying code */);
 
-    ck_tile::HostTensor<ODataType> o_acc_host(
-        {num_splits, shape_batch, nhead, shape_seqlen_q, hdim_v});
+    ck_tile::HostTensor<ODataType> o_acc_host(1 < num_splits
+                                                  ? std::array<ck_tile::index_t, 5>{num_splits,
+                                                                                    shape_batch,
+                                                                                    nhead,
+                                                                                    shape_seqlen_q,
+                                                                                    hdim_v}
+                                                  : std::array<ck_tile::index_t, 5>{1, 1, 1, 1, 1});
 
     ck_tile::HostTensor<ODataType> o_host(
         get_lengths(o_perm, shape_batch, nhead, shape_seqlen_q, hdim_v));
