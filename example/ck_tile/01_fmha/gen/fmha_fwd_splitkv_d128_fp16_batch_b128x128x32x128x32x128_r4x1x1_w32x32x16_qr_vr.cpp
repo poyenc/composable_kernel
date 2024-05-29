@@ -138,6 +138,7 @@ float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args 
     }();
 
     float time_b = [&] {
+#if 1
 #if 0
         if (a.num_splits <= 2) {
             return launch_splitkv_combine_kernel<2>(s, a);
@@ -145,13 +146,22 @@ float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args 
             return launch_splitkv_combine_kernel<4>(s, a);
         } else if (a.num_splits <= 8) {
             return launch_splitkv_combine_kernel<8>(s, a);
-        } else if (a.num_splits <= 16) {
+        } else
+#endif
+        if(a.num_splits <= 16)
+        {
             return launch_splitkv_combine_kernel<16>(s, a);
-        } else if (a.num_splits <= 32) {
+        }
+        else if(a.num_splits <= 32)
+        {
             return launch_splitkv_combine_kernel<32>(s, a);
-        } else if (a.num_splits <= 64) {
+        }
+        else if(a.num_splits <= 64)
+        {
             return launch_splitkv_combine_kernel<64>(s, a);
-        } else if (a.num_splits <= 128) {
+        }
+        else if(a.num_splits <= 128)
+        {
             return launch_splitkv_combine_kernel<128>(s, a);
         }
         return 0.f;
