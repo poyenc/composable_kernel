@@ -297,10 +297,8 @@ bool run(const ck_tile::ArgParser& arg_parser)
     const ck_tile::index_t shape_seqlen_k =
         (mode == mode_enum::batch ? seqlen_k : seqstart_k_host.back());
 
-    num_splits =
-        std::min(MAX_NUM_SPLITS,
-                 override_num_splits_if_necessary(
-                     shape_batch, nhead, hdim_v, shape_seqlen_k, shape_seqlen_q, 0.0, num_splits));
+    num_splits = override_num_splits_if_necessary(
+        shape_batch, nhead, hdim_v, shape_seqlen_k, shape_seqlen_q, 0.0, num_splits);
 
     ck_tile::HostTensor<QDataType> q_host(
         get_lengths(i_perm, shape_batch, nhead, shape_seqlen_q, hdim_q));

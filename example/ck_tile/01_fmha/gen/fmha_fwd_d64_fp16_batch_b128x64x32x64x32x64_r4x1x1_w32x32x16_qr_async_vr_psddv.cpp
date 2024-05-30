@@ -6,7 +6,7 @@
 
 using fmha_dtype_0 = ck_tile::fp16_t;
 
-using fmha_block_tile_0  = ck_tile::sequence<128, 128, 32, 256, 32, 256>;
+using fmha_block_tile_0  = ck_tile::sequence<128, 64, 32, 64, 32, 64>;
 using fmha_block_warps_0 = ck_tile::sequence<4, 1, 1>;
 using fmha_warp_tile_0   = ck_tile::sequence<32, 32, 16>;
 
@@ -17,7 +17,7 @@ using fmha_shape_0 = ck_tile::TileFmhaShape<fmha_block_tile_0,
                                             fmha_warp_tile_0,
                                             true>;
 
-using fmha_trait_0 = ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1>;
+using fmha_trait_0 = ck_tile::TileFmhaTraits<true, false, true, true, false, false, false, -1>;
 using fmha_mask_0  = ck_tile::SimplifiedGenericAttentionMask<false>;
 
 using fmha_pipeline_problem_0 =
@@ -36,36 +36,36 @@ using fmha_pipeline_problem_0 =
                                       fmha_mask_0,
                                       fmha_trait_0>;
 
-using fmha_pipeline_0 = ck_tile::BlockFmhaPipelineQRKSVS<fmha_pipeline_problem_0>;
+using fmha_pipeline_0 = ck_tile::BlockFmhaPipelineQRKSVSAsync<fmha_pipeline_problem_0>;
 
 using fmha_epilogue_0 = ck_tile::Default2DEpilogue<
     ck_tile::Default2DEpilogueProblem<typename FmhaFwdTypeConfig<ck_tile::fp16_t>::OaccDataType,
                                       typename FmhaFwdTypeConfig<ck_tile::fp16_t>::ODataType,
-                                      false,
-                                      false>>;
+                                      true,
+                                      true>>;
 
 using fmha_kernel_0 = ck_tile::
     FmhaFwdKernel<ck_tile::FmhaFwdTilePartitioner<fmha_shape_0>, fmha_pipeline_0, fmha_epilogue_0>;
 
-using trait_0 = fmha_fwd_traits_<256,
+using trait_0 = fmha_fwd_traits_<64,
                                  ck_tile::fp16_t,
                                  false,
                                  128,
-                                 128,
+                                 64,
                                  32,
-                                 256,
+                                 64,
                                  32,
-                                 256,
+                                 64,
                                  true,
-                                 ck_tile::BlockFmhaPipelineEnum::QRKSVS,
+                                 ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC,
                                  fmha_mask_0,
                                  false,
                                  false,
                                  false,
+                                 true,
                                  false,
-                                 false,
-                                 false,
-                                 false>;
+                                 true,
+                                 true>;
 
 #include <iostream>
 

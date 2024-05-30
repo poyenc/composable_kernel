@@ -18,7 +18,7 @@ using fmha_shape_0 = ck_tile::TileFmhaShape<fmha_block_tile_0,
                                             true>;
 
 using fmha_fwd_splitkv_trait_0 =
-    ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1>;
+    ck_tile::TileFmhaTraits<true, true, true, true, false, false, false, -1>;
 
 using fmha_mask_0 = ck_tile::SimplifiedGenericAttentionMask<false>;
 
@@ -118,10 +118,10 @@ using trait_0 = fmha_fwd_traits_<256,
                                  false,
                                  false,
                                  false,
-                                 false,
-                                 false,
-                                 false,
-                                 false>;
+                                 true,
+                                 true,
+                                 true,
+                                 true>;
 
 template <>
 float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)

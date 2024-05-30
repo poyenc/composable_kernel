@@ -18,8 +18,7 @@ using fmha_shape_0 = ck_tile::TileFmhaShape<fmha_block_tile_0,
                                             true>;
 
 using fmha_fwd_splitkv_trait_0 =
-    ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1>;
-
+    ck_tile::TileFmhaTraits<true, false, true, true, false, false, false, -1>;
 using fmha_mask_0 = ck_tile::SimplifiedGenericAttentionMask<false>;
 
 using fmha_fwd_splitkv_pipeline_problem_0 =
@@ -39,7 +38,7 @@ using fmha_fwd_splitkv_pipeline_problem_0 =
                                       fmha_fwd_splitkv_trait_0>;
 
 using fmha_fwd_splitkv_pipeline_0 =
-    ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVS<fmha_fwd_splitkv_pipeline_problem_0>;
+    ck_tile::BlockFmhaFwdSplitKVPipelineQRKSVSAsync<fmha_fwd_splitkv_pipeline_problem_0>;
 
 using fmha_epilogue_0 = ck_tile::Default2DEpilogue<
     ck_tile::Default2DEpilogueProblem<typename FmhaFwdTypeConfig<ck_tile::fp16_t>::OaccDataType,
@@ -58,7 +57,7 @@ template <ck_tile::index_t kMaxSplits>
 auto get_splitkv_combine_kernel()
 {
     using fmha_fwd_splitkv_combine_trait_0 =
-        ck_tile::TileFmhaTraits<false, false, false, false, false, false, false, -1, kMaxSplits>;
+        ck_tile::TileFmhaTraits<true, false, true, true, false, false, false, -1, kMaxSplits>;
 
     using fmha_fwd_splitkv_combine_pipeline_problem_0 = ck_tile::BlockFmhaPipelineProblem<
         typename FmhaFwdTypeConfig<fmha_dtype_0>::QDataType,
@@ -113,15 +112,15 @@ using trait_0 = fmha_fwd_traits_<64,
                                  32,
                                  64,
                                  true,
-                                 ck_tile::BlockFmhaPipelineEnum::QRKSVS,
-                                 fmha_mask_0,
+                                 ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC,
+                                 ck_tile::SimplifiedGenericAttentionMask<false>,
                                  false,
                                  false,
                                  false,
+                                 true,
                                  false,
-                                 false,
-                                 false,
-                                 false>;
+                                 true,
+                                 true>;
 
 template <>
 float fmha_fwd_splitkv_<trait_0>(const ck_tile::stream_config& s, fmha_fwd_args a)
