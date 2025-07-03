@@ -767,9 +767,9 @@ bool run(const ck_tile::ArgParser& arg_parser)
     read_tensor(k_host, "/root/workspace/backup/250703/k_32x128.bin");
     read_tensor(v_host, "/root/workspace/backup/250703/v_32x128.bin");
 
-    print_tensor(q_host, "Q");
-    print_tensor(k_host, "K");
-    print_tensor(v_host, "V");
+    // print_tensor(q_host, "Q");
+    // print_tensor(k_host, "K");
+    // print_tensor(v_host, "V");
 
     iota_shuffle(block_table_host.begin(), block_table_host.end(), 0);
     iota_shuffle(cache_batch_idx_host.begin(), cache_batch_idx_host.end(), 0);
