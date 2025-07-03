@@ -764,8 +764,8 @@ bool run(const ck_tile::ArgParser& arg_parser)
     };
 
     read_tensor(q_host, "/root/workspace/backup/250703/q_256x128.bin");
-    read_tensor(k_host, "/root/workspace/backup/250703/k_32x128.bin");
-    read_tensor(v_host, "/root/workspace/backup/250703/v_32x128.bin");
+    read_tensor(k_host, "/root/workspace/backup/250703/k_64x128.bin");
+    read_tensor(v_host, "/root/workspace/backup/250703/v_64x128.bin");
 
     // print_tensor(q_host, "Q");
     // print_tensor(k_host, "K");
@@ -827,13 +827,14 @@ bool run(const ck_tile::ArgParser& arg_parser)
         if(permute) return std::string("bhsd");
         else return std::string("bshd");
     };
-    auto io_layout = [&](bool iperm_, bool operm_) {
+    [[maybe_unused]]auto io_layout = [&](bool iperm_, bool operm_) {
         if(iperm_ == operm_) return layout_str(iperm_);
         else return layout_str(iperm_) + std::string("-") + layout_str(operm_);
     };
     // clang-format on
     const std::string prec = arg_parser.get_str("prec");
 
+#if 0
     std::cout << "[" << prec << "|" << mode << "|" << io_layout(i_perm, o_perm) << "] b:" << batch
               << ", h:" << nhead << "/" << nhead_k << ", s:" << seqlen_qs[0] << "/" << seqlen_ks[0]
               << (seqlen_kpads[0] < 0 ? ""
@@ -841,6 +842,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
               << ", d:" << hdim_q << "/" << hdim_v << ", scale_s:" << scale_s << ", bias:" << bias
               << ", p_drop:" << p_drop << ", lse:" << lse << ", squant:" << squant
               << ", mask:" << mask << ", v:" << vlayout;
+#endif
 #if CK_TILE_FMHA_FWD_APPENDKV_API
     if(0 < rotary_dim)
     {
