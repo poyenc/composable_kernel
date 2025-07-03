@@ -118,8 +118,41 @@ struct BlockFmhaPipelineQRKSVS
 
     CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
     {
-        return Policy::template GetSmemSize<Problem>();
+        // create another LDS buffer for both s_acc & p
+        static_assert(sizeof(PDataType) <= sizeof(SaccDataType));
+        return Policy::template GetSmemSize<Problem>() + (kM0 * kN0 * sizeof(SaccDataType));
     }
+
+    template <index_t MPerBlock, index_t NPerBlock>
+    CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc()
+    {
+        constexpr auto k_lds_block_desc_0 =
+            make_naive_tensor_descriptor(make_tuple(number<MPerBlock>{}, number<NPerBlock>{}),
+                                         make_tuple(number<NPerBlock>{}, number<1>{}),
+                                         number<1>{},
+                                         number<1>{});
+
+        return k_lds_block_desc_0;
+    }
+
+    template <typename DataType, typename Descriptor>
+    CK_TILE_DEVICE static constexpr auto make_lds_tile_window(void* base, const Descriptor& desc)
+    {
+        using namespace ck_tile;
+
+        auto tensor_view =
+            make_tensor_view<address_space_enum::lds>(reinterpret_cast<DataType*>(base), desc);
+        return make_tile_window(tensor_view, desc.get_lengths(), {0, 0});
+    }
+
+#define WARP_ID 0
+
+#define ENABLE_DEBUG_STMTS 1
+#if ENABLE_DEBUG_STMTS
+#define DEBUG_STMTS if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == 0)
+#else
+#define DEBUG_STMTS if constexpr(false)
+#endif
 
     template <typename QDramBlockWindowTmp,
               typename KDramBlockWindowTmp,
@@ -192,6 +225,20 @@ struct BlockFmhaPipelineQRKSVS
         auto v_lds_window = make_tile_window(
             v_lds, Policy::template MakeVLdsBlockDescriptor<Problem>().get_lengths(), {0, 0});
 
+        auto s_lds = make_tensor_view<address_space_enum::lds>(
+            reinterpret_cast<SaccDataType*>(static_cast<char*>(smem_ptr) +
+                                            Policy::template GetSmemSize<Problem>()),
+            MakeSimpleLdsDesc<kM0, kN0>());
+        [[maybe_unused]] auto s_lds_window =
+            make_tile_window(s_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
+
+        auto p_lds = make_tensor_view<address_space_enum::lds>(
+            reinterpret_cast<PDataType*>(static_cast<char*>(smem_ptr) +
+                                         Policy::template GetSmemSize<Problem>()),
+            MakeSimpleLdsDesc<kM0, kN0>());
+        [[maybe_unused]] auto p_lds_window =
+            make_tile_window(p_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
+
         // Block GEMM
         constexpr auto gemm_0 = Policy::template GetQKBlockGemm<Problem>();
         constexpr auto gemm_1 = Policy::template GetKVBlockGemm<Problem>();
@@ -232,6 +279,30 @@ struct BlockFmhaPipelineQRKSVS
             mask.GetTileRangeAlongX(q_origin.at(number<0>{}), number<kM0>{}, number<kN0>{});
 
         const auto num_total_loop = integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
+
+        [[maybe_unused]] auto print_lds = [&](auto lds_tile_window, const char* tensor_name) {
+            const auto num_rows = lds_tile_window.get_window_lengths().at(number<0>{});
+            const auto num_cols = lds_tile_window.get_window_lengths().at(number<1>{});
+
+            auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
+            auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
+
+            for(int row = 0; row < num_rows; ++row)
+            {
+                int offset = desc.calculate_offset(make_tuple(row, 0));
+                printf("[DEVICE] %s[%3d] = %5.2f",
+                       tensor_name,
+                       row,
+                       ck_tile::type_convert<float>(data[offset]));
+                for(int col = 1; col < num_cols; ++col)
+                {
+                    printf(", ");
+                    offset = desc.calculate_offset(make_tuple(row, col));
+                    printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
+                }
+                printf("\n");
+            }
+        };
 
         // check early exit if no work to do
         if constexpr(FmhaMask::IsMasking || kPadSeqLenK)
@@ -439,6 +510,11 @@ struct BlockFmhaPipelineQRKSVS
                 }
             }
 
+            block_sync_lds();
+            store_tile(s_lds_window, s_acc);
+            block_sync_lds();
+            DEBUG_STMTS { print_lds(s_lds_window, "S"); }
+
             const auto s = cast_tile<SMPLComputeDataType>(s_acc); // S{j}
             auto m_local = block_tile_reduce<SMPLComputeDataType>(
                 s,
@@ -566,8 +642,18 @@ struct BlockFmhaPipelineQRKSVS
             }
             move_tile_window(v_dram_window, {0, kK1});
 
+            block_sync_lds();
+            store_tile(s_lds_window, p_compute);
+            block_sync_lds();
+            DEBUG_STMTS { print_lds(s_lds_window, "P_COMPUTE"); }
+
             const auto p =
                 cast_tile<PDataType>(tile_elementwise_in(p_compute_element_func, p_compute));
+
+            block_sync_lds();
+            store_tile(p_lds_window, p);
+            block_sync_lds();
+            DEBUG_STMTS { print_lds(p_lds_window, "P"); }
 
             // STAGE 3, KV gemm
             if constexpr(k1_loops > 1)
