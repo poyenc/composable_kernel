@@ -502,7 +502,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
     }
 
     // accumulation numbers for performance evaluation
-    std::size_t flop = 0, num_byte = 0;
+    // std::size_t flop = 0, num_byte = 0;
     auto max_seqlen_q =
         std::numeric_limits<int32_t>::min(); // we will use max seqlen to decide grid size
     auto max_seqlen_k = std::numeric_limits<int32_t>::min();
@@ -521,7 +521,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
             {
                 max_seqlen_k = real_seqlen_k;
             }
-
+#if 0
             flop += nhead * (static_cast<std::size_t>(2) * mask.get_unmaskarea() * hdim_q +
                              static_cast<std::size_t>(2) * mask.get_unmaskarea() * hdim_v);
 
@@ -529,6 +529,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
                                  sizeof(ODataType) * real_seqlen_q * hdim_v);
             num_byte += nhead_k * (sizeof(KDataType) * real_seqlen_k * hdim_q +
                                    sizeof(VDataType) * hdim_v * real_seqlen_k);
+#endif
         }
     }
 
@@ -842,7 +843,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
               << ", d:" << hdim_q << "/" << hdim_v << ", scale_s:" << scale_s << ", bias:" << bias
               << ", p_drop:" << p_drop << ", lse:" << lse << ", squant:" << squant
               << ", mask:" << mask << ", v:" << vlayout;
-#endif
 #if CK_TILE_FMHA_FWD_APPENDKV_API
     if(0 < rotary_dim)
     {
@@ -865,7 +865,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
     }
 #endif
     std::cout << std::flush;
-
+#endif
     const auto init_traits = [&](auto& traits) {
         traits.hdim_q        = hdim_q;
         traits.hdim_v        = hdim_v;
@@ -1173,7 +1173,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
         std::cout << ", not supported yet" << std::flush << std::endl;
         return false;
     }
-
+#if 0
     const float ave_time = (appendkv_ave_time + fwd_ave_time);
 
     float tflops = static_cast<float>(flop) / 1.E9 / ave_time;
@@ -1182,8 +1182,8 @@ bool run(const ck_tile::ArgParser& arg_parser)
 
     std::cout << std::fixed << ", " << std::setprecision(3) << ave_time << " ms, "
               << std::setprecision(2) << tflops << " TFlops, " << std::setprecision(2) << gb_per_sec
-              << " GB/s" << std::flush << std::endl;
-
+              << " GB/s" << std::flush;
+#endif
     if(do_validation == 0)
     {
         std::cout << std::flush << std::endl;
