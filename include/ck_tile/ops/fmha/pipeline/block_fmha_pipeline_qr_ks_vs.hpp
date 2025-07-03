@@ -154,6 +154,8 @@ struct BlockFmhaPipelineQRKSVS
 #define DEBUG_STMTS if constexpr(false)
 #endif
 
+#define ENABLE_TENSOR_DUMP 0
+
     template <typename QDramBlockWindowTmp,
               typename KDramBlockWindowTmp,
               typename VDramBlockWindowTmp,
@@ -353,8 +355,8 @@ struct BlockFmhaPipelineQRKSVS
         constexpr index_t k0_loops = kQKHeaddim / kK0;
         constexpr index_t k1_loops = kN0 / kK1;
 
-        static_assert(2 <= k0_loops);
-        static_assert(1 <= k1_loops);
+        static_assert(1 == k0_loops);
+        static_assert(1 == k1_loops);
         do
         {
             // STAGE 1, QK gemm
@@ -370,7 +372,6 @@ struct BlockFmhaPipelineQRKSVS
                 move_tile_window(k_dram_window, {0, kK0});
                 clear_tile(s_acc); // initialize C
                 store_tile(k_lds_window, tile_elementwise_in(k_element_func, k_block_tile));
-                k_block_tile = load_tile(k_dram_window);
             }
 
             if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
@@ -385,38 +386,9 @@ struct BlockFmhaPipelineQRKSVS
                     0); // prevent from messing up the order of global loads
             }
 
-            if constexpr(k0_loops > 2)
-            {
-                static_for<0, k0_loops - 2, 1>{}([&](auto i_k0) {
-                    block_sync_lds();
-                    gemm_0(s_acc,
-                           get_slice_tile(q_tile,
-                                          sequence<0, i_k0 * kK0>{},
-                                          sequence<kM0, (i_k0 + 1) * kK0>{}),
-                           k_lds_window);
-                    block_sync_lds();
-                    move_tile_window(k_dram_window, {0, kK0});
-
-                    store_tile(
-                        k_lds_window,
-                        tile_elementwise_in(k_element_func, k_block_tile)); // LDS write i + 1
-                    k_block_tile = load_tile(k_dram_window);                // global read i + 2
-                });
-            }
-
             const auto v_prefetch = load_tile(v_dram_window); // prefetch load v tile
             {                                                 // tail
                 block_sync_lds();
-                gemm_0(s_acc,
-                       get_slice_tile(q_tile,
-                                      sequence<0, (k0_loops - 2) * kK0>{},
-                                      sequence<kM0, (k0_loops - 1) * kK0>{}),
-                       k_lds_window);
-                block_sync_lds();
-
-                store_tile(k_lds_window, tile_elementwise_in(k_element_func, k_block_tile));
-                block_sync_lds();
-
                 gemm_0(s_acc,
                        get_slice_tile(q_tile,
                                       sequence<0, (k0_loops - 1) * kK0>{},
@@ -510,12 +482,22 @@ struct BlockFmhaPipelineQRKSVS
                 }
             }
 
-            #if 0
+            DEBUG_STMTS
+            {
+                printf("[POYENC] K tile (size=%d): %5.2f",
+                       decltype(k_block_tile.thread_buf_)::size(),
+                       ck_tile::type_convert<float>(k_block_tile.thread_buf_[0]));
+                static_for<1, decltype(k_block_tile.thread_buf_)::size(), 1>{}([&](auto i) {
+                    printf(", %5.2f", ck_tile::type_convert<float>(k_block_tile.thread_buf_[i]));
+                });
+            }
+
+#if 0 && ENABLE_TENSOR_DUMP
             block_sync_lds();
             store_tile(s_lds_window, s_acc);
             block_sync_lds();
             DEBUG_STMTS { print_lds(s_lds_window, "S"); }
-            #endif
+#endif
 
             const auto s = cast_tile<SMPLComputeDataType>(s_acc); // S{j}
             auto m_local = block_tile_reduce<SMPLComputeDataType>(
@@ -643,19 +625,21 @@ struct BlockFmhaPipelineQRKSVS
                            tile_elementwise_in(v_element_func, v_prefetch)); // store the prefetch
             }
             move_tile_window(v_dram_window, {0, kK1});
-            #if 0
+#if 0 && ENABLE_TENSOR_DUMP
             block_sync_lds();
             store_tile(s_lds_window, p_compute);
             block_sync_lds();
             DEBUG_STMTS { print_lds(s_lds_window, "P_COMPUTE"); }
-            #endif
+#endif
             const auto p =
                 cast_tile<PDataType>(tile_elementwise_in(p_compute_element_func, p_compute));
 
+#if 0 && ENABLE_TENSOR_DUMP
             block_sync_lds();
             store_tile(p_lds_window, p);
             block_sync_lds();
             DEBUG_STMTS { print_lds(p_lds_window, "P"); }
+#endif
 
             // STAGE 3, KV gemm
             if constexpr(k1_loops > 1)
