@@ -510,10 +510,12 @@ struct BlockFmhaPipelineQRKSVS
                 }
             }
 
+            #if 0
             block_sync_lds();
             store_tile(s_lds_window, s_acc);
             block_sync_lds();
             DEBUG_STMTS { print_lds(s_lds_window, "S"); }
+            #endif
 
             const auto s = cast_tile<SMPLComputeDataType>(s_acc); // S{j}
             auto m_local = block_tile_reduce<SMPLComputeDataType>(
@@ -641,12 +643,12 @@ struct BlockFmhaPipelineQRKSVS
                            tile_elementwise_in(v_element_func, v_prefetch)); // store the prefetch
             }
             move_tile_window(v_dram_window, {0, kK1});
-
+            #if 0
             block_sync_lds();
             store_tile(s_lds_window, p_compute);
             block_sync_lds();
             DEBUG_STMTS { print_lds(s_lds_window, "P_COMPUTE"); }
-
+            #endif
             const auto p =
                 cast_tile<PDataType>(tile_elementwise_in(p_compute_element_func, p_compute));
 
