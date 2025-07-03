@@ -490,6 +490,7 @@ struct BlockFmhaPipelineQRKSVS
                 static_for<1, decltype(k_block_tile.thread_buf_)::size(), 1>{}([&](auto i) {
                     printf(", %5.2f", ck_tile::type_convert<float>(k_block_tile.thread_buf_[i]));
                 });
+                printf("\n");
             }
 
 #if 0 && ENABLE_TENSOR_DUMP
