@@ -579,6 +579,12 @@ bool run(const ck_tile::ArgParser& arg_parser)
                                   : (seqlen_kpads[0] < 0 ? seqstart_k_host.back()
                                                          : seqstart_k_with_padding_host.back()));
 
+    if(!(shape_batch == 1 && nhead == 1 && i_perm == 1))
+    {
+        std::cerr << "only support batch=1, nhead=1, iperm=1 for now" << std::endl;
+        return false;
+    }
+
     ck_tile::HostTensor<QDataType> q_host(
         get_lengths(i_perm, shape_batch, nhead, shape_seqlen_q, hdim_q));
     ck_tile::HostTensor<KDataType> k_host(
@@ -669,10 +675,10 @@ bool run(const ck_tile::ArgParser& arg_parser)
     }
     else if(init_method == "uf" || init_method == "1")
     {
-        ck_tile::FillUniformDistribution<QDataType>{0.f, 1.f, seed}(q_host);
-        ck_tile::FillUniformDistribution<KDataType>{0.f, 1.f, seed}(k_host);
+        // ck_tile::FillUniformDistribution<QDataType>{0.f, 1.f, seed}(q_host);
+        // ck_tile::FillUniformDistribution<KDataType>{0.f, 1.f, seed}(k_host);
         ck_tile::FillUniformDistribution<KDataType>{0.f, 1.f, seed}(knew_host);
-        ck_tile::FillUniformDistribution<VDataType>{0.f, 1.f, seed}(v_host);
+        // ck_tile::FillUniformDistribution<VDataType>{0.f, 1.f, seed}(v_host);
         ck_tile::FillUniformDistribution<VDataType>{0.f, 1.f, seed}(vnew_host);
         ck_tile::FillUniformDistribution<BiasDataType>{0.f, 1.f, seed}(bias_host);
     }
@@ -726,6 +732,45 @@ bool run(const ck_tile::ArgParser& arg_parser)
             }
         }
     }
+    // override q_host/k_host/v_host by the values read from dumped binary files
+    [[maybe_unused]] auto read_tensor = [](auto& tensor, const std::string& fname) {
+        // std::cout << "tensor size (in bytes): " << tensor.get_element_space_size_in_bytes() <<
+        // std::endl; assume that tensor is big enough to store the data in the file
+        std::ifstream ifs(fname, std::ios::binary);
+        if(!ifs)
+        {
+            throw std::runtime_error("failed to open file: " + fname);
+        }
+        ifs.read(reinterpret_cast<char*>(tensor.data()), tensor.get_element_space_size_in_bytes());
+    };
+
+    [[maybe_unused]] auto print_tensor = [](const auto& tensor, const char* name) {
+        const int num_rows = tensor.get_lengths()[2];
+        const int num_cols = tensor.get_lengths()[3];
+
+        for(int row = 0; row < num_rows; ++row)
+        {
+            printf("[HOST] %s[%3d] = %5.2f",
+                   name,
+                   row,
+                   ck_tile::type_convert<float>(tensor(0, 0, row, 0)));
+            for(int col = 1; col < num_cols; ++col)
+            {
+                printf(", ");
+                printf("%5.2f", ck_tile::type_convert<float>(tensor(0, 0, row, col)));
+            }
+            printf("\n");
+        }
+    };
+
+    read_tensor(q_host, "/root/workspace/backup/250703/q_256x128.bin");
+    read_tensor(k_host, "/root/workspace/backup/250703/k_32x128.bin");
+    read_tensor(v_host, "/root/workspace/backup/250703/v_32x128.bin");
+
+    print_tensor(q_host, "Q");
+    print_tensor(k_host, "K");
+    print_tensor(v_host, "V");
+
     iota_shuffle(block_table_host.begin(), block_table_host.end(), 0);
     iota_shuffle(cache_batch_idx_host.begin(), cache_batch_idx_host.end(), 0);
 
