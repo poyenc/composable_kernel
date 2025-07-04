@@ -120,7 +120,11 @@ struct BlockFmhaPipelineQRKSVS
     {
         // create another LDS buffer for both s_acc & p
         static_assert(sizeof(PDataType) <= sizeof(SaccDataType));
-        return Policy::template GetSmemSize<Problem>() + (kM0 * kN0 * sizeof(SaccDataType));
+        return
+
+            ck_tile::max((kM0 * kN1 * sizeof(PDataType)),
+                         Policy::template GetSmemSize<Problem>() +
+                             (kM0 * kN0 * sizeof(SaccDataType)));
     }
 
     template <index_t MPerBlock, index_t NPerBlock>
@@ -131,6 +135,15 @@ struct BlockFmhaPipelineQRKSVS
                                          make_tuple(number<NPerBlock>{}, number<1>{}),
                                          number<1>{},
                                          number<1>{});
+
+        return k_lds_block_desc_0;
+    }
+
+    template <index_t MPerBlock>
+    CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc1D()
+    {
+        constexpr auto k_lds_block_desc_0 = make_naive_tensor_descriptor(
+            make_tuple(number<MPerBlock>{}), make_tuple(number<1>{}), number<1>{}, number<1>{});
 
         return k_lds_block_desc_0;
     }
@@ -146,7 +159,7 @@ struct BlockFmhaPipelineQRKSVS
     }
 
 #define WARP_ID 0
-#define LANE_ID 3
+#define LANE_ID 0
 
 #define ENABLE_DEBUG_STMTS 1
 #if ENABLE_DEBUG_STMTS
@@ -243,6 +256,19 @@ struct BlockFmhaPipelineQRKSVS
         [[maybe_unused]] auto p_lds_window =
             make_tile_window(p_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
 
+        auto m_lds = make_tensor_view<address_space_enum::lds>(
+            reinterpret_cast<SMPLComputeDataType*>(static_cast<char*>(smem_ptr) +
+                                                   Policy::template GetSmemSize<Problem>()),
+            MakeSimpleLdsDesc1D<kM0>());
+        [[maybe_unused]] auto m_lds_window =
+            make_tile_window(m_lds, make_tuple(number<kM0>{}), {0});
+
+        auto o_lds = make_tensor_view<address_space_enum::lds>(
+            reinterpret_cast<PDataType*>(static_cast<char*>(smem_ptr)),
+            MakeSimpleLdsDesc<kM0, kN1>());
+        [[maybe_unused]] auto o_lds_window =
+            make_tile_window(o_lds, make_tuple(number<kM0>{}, number<kN1>{}), {0, 0});
+
         // Block GEMM
         constexpr auto gemm_0 = Policy::template GetQKBlockGemm<Problem>();
         constexpr auto gemm_1 = Policy::template GetKVBlockGemm<Problem>();
@@ -338,6 +364,23 @@ struct BlockFmhaPipelineQRKSVS
                     printf("\n");
                 }
             }
+        };
+
+        [[maybe_unused]] auto print_lds_1d = [&](auto lds_tile_window, const char* tname) {
+            const auto num_elems = lds_tile_window.get_window_lengths().at(number<0>{});
+
+            auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
+            auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
+
+            int offset = desc.calculate_offset(make_tuple(0));
+            printf("[DEVICE] %s = %5.2f", tname, ck_tile::type_convert<float>(data[offset]));
+            for(int e = 1; e < num_elems; ++e)
+            {
+                printf(", ");
+                offset = desc.calculate_offset(make_tuple(e));
+                printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
+            }
+            printf("\n");
         };
 
         // check early exit if no work to do
@@ -527,18 +570,6 @@ struct BlockFmhaPipelineQRKSVS
                 printf("\n");
             }
 #endif
-#if 0 && ENABLE_TENSOR_DUMP
-            block_sync_lds();
-            store_tile(s_lds_window, s_acc);
-            block_sync_lds();
-            DEBUG_STMTS { print_lds(s_lds_window, "S"); }
-#endif
-#if 0 && ENABLE_TENSOR_DUMP
-            DEBUG_STMTS
-            {
-                print_dist_tensor(s_acc, "S_ACC");
-            }
-#endif
             // S{j} = S_acc{j} * scale_s
             const auto s = tile_elementwise_in(
                 [&](auto logits) {
@@ -555,10 +586,6 @@ struct BlockFmhaPipelineQRKSVS
             const auto m_old = m; // m{j-1}
             tile_elementwise_inout(
                 [](auto& e0, auto e1, auto e2) { e0 = max(e1, e2); }, m, m_old, m_local); // m{j}
-
-#if 1
-            DEBUG_STMTS { print_dist_tensor(m, "M"); }
-#endif
 
             auto p_compute = make_static_distributed_tensor<SMPLComputeDataType>(
                 s.get_tile_distribution()); // Pcompute{j}
@@ -610,6 +637,17 @@ struct BlockFmhaPipelineQRKSVS
                 });
             });
 
+#if 0
+            if(i_total_loops == 1)
+            {
+                auto o_acc_fp16 = cast_tile<PDataType>(o_acc);
+                block_sync_lds();
+                store_tile(o_lds_window, o_acc_fp16);
+                block_sync_lds();
+
+                DEBUG_STMTS { print_lds(o_lds_window, "O_ACC"); }
+            }
+#endif
             auto rowsum_p = block_tile_reduce<SMPLComputeDataType>(
                 p_compute, sequence<1>{}, f_sum, SMPLComputeDataType{0}); // rowsum(Pcompute{j})
 
@@ -652,6 +690,53 @@ struct BlockFmhaPipelineQRKSVS
                 });
             });
 
+#if 0
+            if(i_total_loops == 1)
+            {
+                block_sync_lds();
+                store_tile(m_lds_window, m_old);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds_1d(m_lds_window, "M_OLD"); }
+
+                block_sync_lds();
+                store_tile(m_lds_window, m);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds_1d(m_lds_window, "M"); }
+
+                block_sync_lds();
+                store_tile(m_lds_window, rowsum_p);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds_1d(m_lds_window, "R"); }
+
+                block_sync_lds();
+                store_tile(m_lds_window, l);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds_1d(m_lds_window, "L"); }
+
+#if 0
+                block_sync_lds();
+                store_tile(s_lds_window, s);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds(s_lds_window, "S"); }
+#endif
+
+#if 1
+                block_sync_lds();
+                store_tile(s_lds_window, p_compute);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds(s_lds_window, "P_COMPUTE"); }
+#endif
+
+#if 1
+                auto o_acc_fp16 = cast_tile<PDataType>(o_acc);
+                block_sync_lds();
+                store_tile(o_lds_window, o_acc_fp16);
+                block_sync_lds();
+
+                DEBUG_STMTS { print_lds(o_lds_window, "O_ACC(rescaled)"); }
+#endif
+            }
+#endif
             if constexpr(kHasDropout)
             {
                 dropout.template Run<decltype(gemm_0), SMPLComputeDataType, RandValOutputDataType>(
@@ -731,10 +816,12 @@ struct BlockFmhaPipelineQRKSVS
         } while(++i_total_loops < num_total_loop);
 
 #if 0
-            block_sync_lds();
-            store_tile(s_lds_window, o_acc);
-            block_sync_lds();
-            DEBUG_STMTS { print_lds(s_lds_window, "O_ACC"); }
+        auto o_acc_fp16 = cast_tile<PDataType>(o_acc);
+        block_sync_lds();
+        store_tile(o_lds_window, o_acc_fp16);
+        block_sync_lds();
+
+        DEBUG_STMTS { print_lds(o_lds_window, "O_ACC"); }
 #endif
         // store lse
         if constexpr(kStoreLSE)
