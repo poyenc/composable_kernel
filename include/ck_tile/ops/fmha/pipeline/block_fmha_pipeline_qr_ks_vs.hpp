@@ -146,15 +146,17 @@ struct BlockFmhaPipelineQRKSVS
     }
 
 #define WARP_ID 0
+#define LANE_ID 3
 
 #define ENABLE_DEBUG_STMTS 1
 #if ENABLE_DEBUG_STMTS
-#define DEBUG_STMTS if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == 0)
+#define DEBUG_STMTS \
+    if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == LANE_ID)
 #else
 #define DEBUG_STMTS if constexpr(false)
 #endif
 
-#define ENABLE_TENSOR_DUMP 0
+#define ENABLE_TENSOR_DUMP 1
 
     template <typename QDramBlockWindowTmp,
               typename KDramBlockWindowTmp,
@@ -282,27 +284,59 @@ struct BlockFmhaPipelineQRKSVS
 
         const auto num_total_loop = integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
 
-        [[maybe_unused]] auto print_lds = [&](auto lds_tile_window, const char* tensor_name) {
+        [[maybe_unused]] auto print_dist_tensor = [&](const auto& dist_tensor, const char* tname) {
+            printf("[POYENC] %s (size=%d): %5.2f",
+                   tname,
+                   decltype(dist_tensor.thread_buf_)::size(),
+                   ck_tile::type_convert<float>(dist_tensor.thread_buf_[0]));
+            static_for<1, decltype(dist_tensor.thread_buf_)::size(), 1>{}([&](auto i) {
+                printf(", %5.2f", ck_tile::type_convert<float>(dist_tensor.thread_buf_[i]));
+            });
+            printf("\n");
+        };
+
+        [[maybe_unused]] auto print_lds = [&](auto lds_tile_window, const char* tname) {
             const auto num_rows = lds_tile_window.get_window_lengths().at(number<0>{});
             const auto num_cols = lds_tile_window.get_window_lengths().at(number<1>{});
 
             auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
             auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
 
-            for(int row = 0; row < num_rows; ++row)
+            if constexpr(true || num_rows < num_cols)
             {
-                int offset = desc.calculate_offset(make_tuple(row, 0));
-                printf("[DEVICE] %s[%3d] = %5.2f",
-                       tensor_name,
-                       row,
-                       ck_tile::type_convert<float>(data[offset]));
-                for(int col = 1; col < num_cols; ++col)
+                for(int row = 0; row < num_rows; ++row)
                 {
-                    printf(", ");
-                    offset = desc.calculate_offset(make_tuple(row, col));
-                    printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
+                    int offset = desc.calculate_offset(make_tuple(row, 0));
+                    printf("[DEVICE] %s[%3d] = %5.2f",
+                           tname,
+                           row,
+                           ck_tile::type_convert<float>(data[offset]));
+                    for(int col = 1; col < num_cols; ++col)
+                    {
+                        printf(", ");
+                        offset = desc.calculate_offset(make_tuple(row, col));
+                        printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
+                    }
+                    printf("\n");
                 }
-                printf("\n");
+            }
+            else
+            {
+                for(int col = 0; col < num_cols; ++col)
+                {
+                    int offset = desc.calculate_offset(make_tuple(0, col));
+                    printf("[DEVICE] %s[%3d] = %5.2f",
+                           tname,
+                           col,
+                           ck_tile::type_convert<float>(data[offset]));
+                    for(int row = 1; row < num_rows; ++row)
+                    {
+                        printf(", ");
+                        offset = desc.calculate_offset(make_tuple(row, col));
+                        printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
+                    }
+                    printf("\n");
+                }
             }
         };
 
@@ -481,7 +515,7 @@ struct BlockFmhaPipelineQRKSVS
                         });
                 }
             }
-
+#if 0
             DEBUG_STMTS
             {
                 printf("[POYENC] K tile (size=%d): %5.2f",
@@ -492,15 +526,25 @@ struct BlockFmhaPipelineQRKSVS
                 });
                 printf("\n");
             }
-
+#endif
 #if 0 && ENABLE_TENSOR_DUMP
             block_sync_lds();
             store_tile(s_lds_window, s_acc);
             block_sync_lds();
             DEBUG_STMTS { print_lds(s_lds_window, "S"); }
 #endif
-
-            const auto s = cast_tile<SMPLComputeDataType>(s_acc); // S{j}
+#if 0 && ENABLE_TENSOR_DUMP
+            DEBUG_STMTS
+            {
+                print_dist_tensor(s_acc, "S_ACC");
+            }
+#endif
+            // S{j} = S_acc{j} * scale_s
+            const auto s = tile_elementwise_in(
+                [&](auto logits) {
+                    return ck_tile::type_convert<SMPLComputeDataType>(logits * scale_s);
+                },
+                s_acc);
             auto m_local = block_tile_reduce<SMPLComputeDataType>(
                 s,
                 sequence<1>{},
@@ -511,6 +555,10 @@ struct BlockFmhaPipelineQRKSVS
             const auto m_old = m; // m{j-1}
             tile_elementwise_inout(
                 [](auto& e0, auto e1, auto e2) { e0 = max(e1, e2); }, m, m_old, m_local); // m{j}
+
+#if 1
+            DEBUG_STMTS { print_dist_tensor(m, "M"); }
+#endif
 
             auto p_compute = make_static_distributed_tensor<SMPLComputeDataType>(
                 s.get_tile_distribution()); // Pcompute{j}
@@ -535,7 +583,7 @@ struct BlockFmhaPipelineQRKSVS
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
                 constexpr auto i_idx = make_tuple(idx0);
 #if CK_TILE_FMHA_FWD_FAST_EXP2
-                auto row_max = scale_s * get_validated_m(m[i_idx]);
+                auto row_max = get_validated_m(m[i_idx]);
 #endif
                 sweep_tile_span(p_spans[number<1>{}], [&](auto idx1) {
                     constexpr auto i_j_idx = make_tuple(idx0, idx1);
@@ -553,7 +601,7 @@ struct BlockFmhaPipelineQRKSVS
                         }
                         else
                         {
-                            p_compute(i_j_idx) = exp2(scale_s * s[i_j_idx] - row_max);
+                            p_compute(i_j_idx) = exp2(s[i_j_idx] - row_max);
                         }
                     }
 #else
@@ -586,8 +634,8 @@ struct BlockFmhaPipelineQRKSVS
                         }
                         else
                         {
-                            auto row_max = scale_s * get_validated_m(m[i_idx]);
-                            return exp2(scale_s * m_old[i_idx] - row_max);
+                            auto row_max = get_validated_m(m[i_idx]);
+                            return exp2(m_old[i_idx] - row_max);
                         }
                     }
                 }();
@@ -626,22 +674,16 @@ struct BlockFmhaPipelineQRKSVS
                            tile_elementwise_in(v_element_func, v_prefetch)); // store the prefetch
             }
             move_tile_window(v_dram_window, {0, kK1});
-#if 0 && ENABLE_TENSOR_DUMP
-            block_sync_lds();
-            store_tile(s_lds_window, p_compute);
-            block_sync_lds();
-            DEBUG_STMTS { print_lds(s_lds_window, "P_COMPUTE"); }
-#endif
+
             const auto p =
                 cast_tile<PDataType>(tile_elementwise_in(p_compute_element_func, p_compute));
 
-#if 0 && ENABLE_TENSOR_DUMP
-            block_sync_lds();
-            store_tile(p_lds_window, p);
-            block_sync_lds();
-            DEBUG_STMTS { print_lds(p_lds_window, "P"); }
+#if 0
+                block_sync_lds();
+                store_tile(p_lds_window, p);
+                block_sync_lds();
+                DEBUG_STMTS { print_lds(p_lds_window, "P"); }
 #endif
-
             // STAGE 3, KV gemm
             if constexpr(k1_loops > 1)
             {
@@ -680,8 +722,20 @@ struct BlockFmhaPipelineQRKSVS
                        v_lds_window);
                 block_sync_lds();
             }
+
+#if 0
+            block_sync_lds();
+            DEBUG_STMTS { print_lds(v_lds_window, "V"); }
+            block_sync_lds();
+#endif
         } while(++i_total_loops < num_total_loop);
 
+#if 0
+            block_sync_lds();
+            store_tile(s_lds_window, o_acc);
+            block_sync_lds();
+            DEBUG_STMTS { print_lds(s_lds_window, "O_ACC"); }
+#endif
         // store lse
         if constexpr(kStoreLSE)
         {
@@ -704,7 +758,7 @@ struct BlockFmhaPipelineQRKSVS
                     }
                     else
                     {
-                        lse(i_idx) = m_[i_idx] * scale_s / C_LOG2E + log(l_[i_idx]);
+                        lse(i_idx) = m_[i_idx] / C_LOG2E + log(l_[i_idx]);
                     }
                 }
 #else

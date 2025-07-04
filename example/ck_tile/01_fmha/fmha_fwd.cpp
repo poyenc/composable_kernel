@@ -764,9 +764,17 @@ bool run(const ck_tile::ArgParser& arg_parser)
         }
     };
 
-    read_tensor(q_host, "/root/workspace/backup/250703/q_256x128.bin");
-    read_tensor(k_host, "/root/workspace/backup/250703/k_64x128.bin");
-    read_tensor(v_host, "/root/workspace/backup/250703/v_64x128.bin");
+    const std::string binary_dir = "/root/workspace/backup/250704";
+
+    auto get_binary_path = [&](const std::string& prefix, unsigned seqlen, unsigned hdim) {
+        std::ostringstream oss;
+        oss << binary_dir << "/" << prefix << seqlen << "x" << hdim << ".bin";
+        return oss.str();
+    };
+
+    read_tensor(q_host, get_binary_path("q_", shape_seqlen_q, hdim_q));
+    read_tensor(k_host, get_binary_path("k_", shape_seqlen_k, hdim_q));
+    read_tensor(v_host, get_binary_path("v_", shape_seqlen_k, hdim_v));
 
     // print_tensor(q_host, "Q");
     // print_tensor(k_host, "K");
@@ -1184,6 +1192,9 @@ bool run(const ck_tile::ArgParser& arg_parser)
               << std::setprecision(2) << tflops << " TFlops, " << std::setprecision(2) << gb_per_sec
               << " GB/s" << std::flush;
 #endif
+    o_buf.FromDevice(o_host.data());
+    // print_tensor(o_host, "O");
+
     if(do_validation == 0)
     {
         std::cout << std::flush << std::endl;
