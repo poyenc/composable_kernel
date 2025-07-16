@@ -17,7 +17,7 @@ if(NOT "fwd" IN_LIST FMHA_FWD_ENABLE_APIS)
   list(APPEND FMHA_FWD_ENABLE_APIS "fwd")
 endif()
 
-set(KERNEL fmha_fwd_d128_bf16_batch_b128x128x32x128x32x128_r4x1x1_r4x1x1_w32x32x16_w32x32x16_qr_async_vr_psddv_nlogits_nbias_nmask_nlse_ndropout_nskip_nsquant)
+set(KERNEL fmha_fwd_d256_fp16_batch_b128x128x32x256x32x256_r4x1x1_r4x1x1_w32x32x16_w32x32x16_qr_vr_npad_nlogits_nbias_nmask_nlse_ndropout_nskip_nsquant)
 
 string(REPLACE ";" "," FMHA_FWD_APIS "${FMHA_FWD_ENABLE_APIS}")
 # generate a list of kernels, but not actually emit files at config sta
