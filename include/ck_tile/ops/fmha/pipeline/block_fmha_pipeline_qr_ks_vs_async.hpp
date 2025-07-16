@@ -395,6 +395,7 @@ struct BlockFmhaPipelineQRKSVSAsync
             __builtin_amdgcn_s_barrier();
 
             const auto bias_tile = load_tile(bias_dram_window); // load bias tile
+            /// NOTICE: first time load V tile here
             auto v_buf           = load_tile(v_dram_window, number<-1>{}, bool_constant<false>{});
             __builtin_amdgcn_sched_barrier(0);
             { // tail
@@ -548,6 +549,7 @@ struct BlockFmhaPipelineQRKSVSAsync
                 move_tile_window(
                     v_dram_window,
                     {0, kK1}); // will have scratch if move this right after load_tile(v_dram)...
+                /// NOTICE: second time load V tile here
                 v_buf = load_tile(
                     v_dram_window, number<-1>{}, bool_constant<false>{}); // load next v_buf
             }
