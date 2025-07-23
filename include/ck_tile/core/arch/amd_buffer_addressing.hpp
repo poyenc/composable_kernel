@@ -1781,7 +1781,11 @@ CK_TILE_DEVICE void amd_async_buffer_load_impl(CK_TILE_LDS_ADDR T* smem,
                                                index_t src_immediate_addr_offset = 0,
                                                bool_constant<pre_nop>            = {})
 {
-    if constexpr(sizeof(T) * N == 4)
+    constexpr index_t num_bytes = sizeof(T) * N;
+    static_assert(num_bytes == 4 || num_bytes == (4 * 3) || num_bytes == (4 * 4),
+                  "wrong! only support in dword, dwordx3, dwordx4");
+
+    if constexpr(num_bytes == 4) // dword
     {
         async_buffer_load_dword_v(smem,
                                   src_wave_buffer_resource,
@@ -1791,7 +1795,8 @@ CK_TILE_DEVICE void amd_async_buffer_load_impl(CK_TILE_LDS_ADDR T* smem,
                                   0,
                                   bool_constant<pre_nop>{});
     }
-    else if constexpr(sizeof(T) * N == 16)
+#if defined(__gfx950__)
+    else if constexpr(num_bytes == 4 * 4) // dwordx4
     {
         async_buffer_load_dwordx4_v(smem,
                                     src_wave_buffer_resource,
@@ -1801,9 +1806,10 @@ CK_TILE_DEVICE void amd_async_buffer_load_impl(CK_TILE_LDS_ADDR T* smem,
                                     0,
                                     bool_constant<pre_nop>{});
     }
+#endif
     else
     {
-        static_assert(sizeof(T) * N == 4, "wrong! not implemented vector size");
+        static_assert(num_bytes, "wrong! not implemented data width");
     }
 }
 
