@@ -31,6 +31,7 @@ set(FMHA_FWD_CODE_GEN_COMMON_ARGS
   --api ${FMHA_FWD_APIS}
   --optdim 32,64,128,256
   # --filter fmha_fwd...
+  --filter ${KERNEL}
 )
 set(FMHA_BWD_CODE_GEN_COMMON_ARGS
   ${CMAKE_CURRENT_LIST_DIR}/generate.py
@@ -44,7 +45,6 @@ set(FMHA_BWD_CODE_GEN_COMMON_ARGS
 execute_process(
   COMMAND ${Python3_EXECUTABLE} ${FMHA_FWD_CODE_GEN_COMMON_ARGS}
   --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/fwd_blob_list.txt
-  --filter ${KERNEL}
   RESULT_VARIABLE ret
 )
 if(ret AND NOT ret EQUAL 0)
