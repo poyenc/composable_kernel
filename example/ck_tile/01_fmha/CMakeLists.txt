@@ -70,7 +70,6 @@ add_custom_command(
   COMMAND ${Python3_EXECUTABLE} ${FMHA_FWD_CODE_GEN_COMMON_ARGS}
   --output_dir ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS ${CODE_GEN_SCRIPTS}
-  --filter ${KERNEL}
 )
 
 add_custom_command(
