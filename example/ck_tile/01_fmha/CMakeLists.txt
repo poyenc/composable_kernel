@@ -42,13 +42,9 @@ set(FMHA_BWD_CODE_GEN_COMMON_ARGS
 
 # generate a list of kernels, but not actually emit files at config sta
 execute_process(
-<<<<<<< HEAD
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
-  --api ${FMHA_FWD_APIS} --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/fwd_blob_list.txt --filter ${KERNEL}
-=======
   COMMAND ${Python3_EXECUTABLE} ${FMHA_FWD_CODE_GEN_COMMON_ARGS}
   --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/fwd_blob_list.txt
->>>>>>> develop
+  --filter ${KERNEL}
   RESULT_VARIABLE ret
 )
 if(ret AND NOT ret EQUAL 0)
@@ -71,14 +67,10 @@ file(STRINGS ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt FMHA_BWD_GEN_BLOBS)
 
 add_custom_command(
   OUTPUT ${FMHA_FWD_GEN_BLOBS}
-<<<<<<< HEAD
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
-  --api ${FMHA_FWD_APIS} --output_dir ${CMAKE_CURRENT_BINARY_DIR} --filter ${KERNEL}
-=======
   COMMAND ${Python3_EXECUTABLE} ${FMHA_FWD_CODE_GEN_COMMON_ARGS}
   --output_dir ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS ${CODE_GEN_SCRIPTS}
->>>>>>> develop
+  --filter ${KERNEL}
 )
 
 add_custom_command(
