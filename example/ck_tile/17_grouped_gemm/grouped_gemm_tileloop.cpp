@@ -116,9 +116,12 @@ float grouped_gemm_tileloop(const ck_tile::stream_config& s,
         using GemmEpilogue = ck_tile::CShuffleEpilogue<
             ck_tile::CShuffleEpilogueProblem<ADataType,
                                              BDataType,
+                                             ck_tile::tuple<>,
                                              AccDataType,
                                              CDataType,
+                                             ck_tile::tuple<>,
                                              CLayout,
+                                             ck_tile::element_wise::PassThrough,
                                              GemmPipelineProblem::kBlockSize,
                                              TilePartitioner::MPerBlock,
                                              TilePartitioner::NPerBlock,
@@ -135,10 +138,9 @@ float grouped_gemm_tileloop(const ck_tile::stream_config& s,
 
         if(s.log_level_ > 0)
         {
-            std::cout << "Launching kernel: " << Kernel::GetName() << " with args:"
-                      << " grid: {" << grids.x << ", " << grids.y << ", " << grids.z << "}"
-                      << ", blocks: {" << blocks.x << ", " << blocks.y << ", " << blocks.z << "}"
-                      << std::endl;
+            std::cout << "Launching kernel: " << Kernel::GetName() << " with args:" << " grid: {"
+                      << grids.x << ", " << grids.y << ", " << grids.z << "}" << ", blocks: {"
+                      << blocks.x << ", " << blocks.y << ", " << blocks.z << "}" << std::endl;
         }
 
         ave_time =
