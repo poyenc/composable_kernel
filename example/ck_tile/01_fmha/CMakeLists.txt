@@ -1,6 +1,6 @@
 # validate user-specified fmha_fwd API list
 set(FMHA_FWD_KNOWN_APIS "fwd;fwd_splitkv;fwd_appendkv;pagedkv_prefill")
-set(FMHA_FWD_ENABLE_APIS "fwd" CACHE STRING
+set(FMHA_FWD_ENABLE_APIS "fwd;fwd_splitkv" CACHE STRING
   "semicolon-separated list of APIs to generate (${FMHA_FWD_KNOWN_APIS}) & link, or \"all\".")
 if(FMHA_FWD_ENABLE_APIS STREQUAL "all")
   set(FMHA_FWD_ENABLE_APIS ${FMHA_FWD_KNOWN_APIS})
