@@ -549,7 +549,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
         return false;
     }
 #if CK_TILE_FMHA_FWD_SPLITKV_API || CK_TILE_FMHA_FWD_PAGEDKV_API
-    if(0 < p_drop && (1 < num_splits || use_kvcache))
+    if(0 < p_drop && (1 <= num_splits || use_kvcache))
     {
         std::cerr << "dropout is not supoprted by split-kv kernels. ignoring the 'p_drop' option"
                   << std::endl;
@@ -617,11 +617,11 @@ bool run(const ck_tile::ArgParser& arg_parser)
         std::max(shape_seqlen_q, shape_seqlen_k), rotary_dim, seed);
 
     ck_tile::HostTensor<LSEDataType> lse_acc_host(
-        1 < num_splits || use_kvcache
+        1 <= num_splits || use_kvcache
             ? std::array<ck_tile::index_t, 4>{shape_batch, nhead, num_splits, shape_seqlen_q}
             : std::array<ck_tile::index_t, 4>{1, 1, 1, 1});
     ck_tile::HostTensor<OaccDataType> o_acc_host(
-        1 < num_splits || use_kvcache ? std::array<ck_tile::index_t, 5>{shape_batch,
+        1 <= num_splits || use_kvcache ? std::array<ck_tile::index_t, 5>{shape_batch,
                                                                         nhead,
                                                                         num_splits,
                                                                         shape_seqlen_q,
@@ -804,7 +804,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
     }
 #endif
 #if CK_TILE_FMHA_FWD_SPLITKV_API || CK_TILE_FMHA_FWD_PAGEDKV_API
-    if(1 < num_splits)
+    if(1 <= num_splits)
     {
         std::cout << ", num_splits:" << num_splits;
     }
@@ -1089,7 +1089,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
 
     const float fwd_ave_time = [&] {
 #if CK_TILE_FMHA_FWD_SPLITKV_API
-        if(1 < num_splits && use_kvcache)
+        if(1 <= num_splits && use_kvcache)
         {
             fmha_fwd_splitkv_traits fmha_splitkv_traits;
             init_traits(fmha_splitkv_traits);
