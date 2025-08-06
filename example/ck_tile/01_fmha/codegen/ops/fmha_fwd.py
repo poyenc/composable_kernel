@@ -581,6 +581,7 @@ class CustomFactory(KernelComponentFactory):
 def get_fwd_blobs(kernel_filter : Optional[str], receipt, optdim_list, mask_impl) -> Tuple[FmhaFwdApiPool, List[FmhaFwdKernel]]:
     gen = list()
     api_pool = FmhaFwdApiPool(mask_impl)
+    return (api_pool, gen)
 
     factory = CustomFactory if os.environ.get('CK_TILE_FMHA_FWD_CUSTOM_FACTORY', '0') == '1' else KernelComponentFactory
 
