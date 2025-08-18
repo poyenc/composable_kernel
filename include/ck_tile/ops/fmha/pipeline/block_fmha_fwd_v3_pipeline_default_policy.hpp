@@ -4,24 +4,32 @@
 #pragma once
 
 #include "ck_tile/core.hpp"
-#include "ck_tile/ops/fmha/pipeline/block_fmha_pipeline_qx_ks_vs_custom_policy.hpp"
+#include "ck_tile/ops/gemm/block/block_gemm_areg_breg_creg_v2.hpp"
+#include "ck_tile/ops/gemm/block/block_gemm_areg_breg_creg_v2_custom_policy.hpp"
+#include "ck_tile/ops/gemm/block/block_gemm_problem.hpp"
+#include "ck_tile/ops/gemm/pipeline/tile_gemm_shape.hpp"
 
 namespace ck_tile {
 
 struct BlockFmhaV3PipelineDefaultPolicy
-    : ck_tile::BlockFmhaPipelineQXKSVSCustomPolicy</* QLoadOnce = */ true,
-                                                   /* AsyncCopy = */ true,
-                                                   /* NumPrefetchK = */ 1,
-                                                   /* NumPrefetchV = */ 1>
 {
-    using BasePolicy = ck_tile::BlockFmhaPipelineQXKSVSCustomPolicy</* QLoadOnce = */ true,
-                                                                    /* AsyncCopy = */ true,
-                                                                    /* NumPrefetchK = */ 1,
-                                                                    /* NumPrefetchV = */ 1>;
-
     static constexpr ck_tile::index_t NumWarpPerGroup = 4;
     static constexpr ck_tile::index_t NumThreadPerWarpGroup =
         NumWarpPerGroup * ck_tile::get_warp_size();
+
+    // TODO: GetAlignment*() currently didn't consider if need padding or not
+    //       so in pipeline still need check padding requirement
+    template <typename Problem>
+    CK_TILE_HOST_DEVICE static constexpr auto GetAlignmentQ()
+    {
+        constexpr index_t MaxVectorSize = 16 / sizeof(typename Problem::QDataType);
+
+        using BlockGemm       = remove_cvref_t<decltype(GetQKBlockGemm<Problem>())>;
+        constexpr auto config = BlockGemm::Policy::template GetWarpGemmMWarpNWarp<Problem>();
+        using WG              = remove_cvref_t<decltype(config.template at<0>())>;
+
+        return min(MaxVectorSize, WG::kK / WG::WarpGemmAttribute::Impl::kABKLane);
+    }
 
     template <typename Problem>
     CK_TILE_DEVICE static constexpr auto GetAlignmentK()
@@ -47,6 +55,16 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t MaxReadSizeInBytes = 4;
 #endif
         return MaxReadSizeInBytes / sizeof(VDataType);
+    }
+
+    template <typename Problem>
+    CK_TILE_HOST_DEVICE static constexpr auto GetAlignmentO()
+    {
+        using BlockGemm       = remove_cvref_t<decltype(GetPVBlockGemm<Problem>())>;
+        constexpr auto config = BlockGemm::Policy::template GetWarpGemmMWarpNWarp<Problem>();
+        using WG              = remove_cvref_t<decltype(config.template at<0>())>;
+
+        return WG::WarpGemmAttribute::Impl::kCM1PerLane;
     }
 
     template <typename Problem>
@@ -437,6 +455,46 @@ struct BlockFmhaV3PipelineDefaultPolicy
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return k_lds_block_desc;
+    }
+
+    template <typename Problem>
+    CK_TILE_DEVICE static constexpr auto GetSingleSmemElementSpaceSize()
+    {
+        // this function assume K/V can share smem
+        constexpr index_t SingleKSize = [&]() {
+            constexpr index_t kNPerBlock = Problem::BlockFmhaShape::kN0;
+            constexpr index_t kKPerBlock = Problem::BlockFmhaShape::kK1;
+            constexpr index_t NumWarps   = Problem::BlockFmhaShape::NumWarps;
+            constexpr index_t WarpSize   = ck_tile::get_warp_size();
+
+            constexpr index_t KPack   = GetSmemKPackK<Problem>(); // this is for lds
+            constexpr index_t KVector = GetAlignmentK<Problem>(); // this is for global load
+            constexpr index_t kPad    = KPack;
+
+            static_assert(WarpSize * KVector >= kKPerBlock && WarpSize * KVector % kKPerBlock == 0);
+            constexpr index_t LanesPerK  = kKPerBlock / KVector;
+            constexpr index_t LaneGroups = WarpSize / LanesPerK;
+            constexpr index_t NumIssues  = kNPerBlock / (LaneGroups * NumWarps);
+
+            return NumIssues * NumWarps * (WarpSize * KVector + kPad);
+        }();
+
+        constexpr index_t SingleVSize = [&]() {
+            using VDataType                = remove_cvref_t<typename Problem::VDataType>;
+            constexpr index_t Banks        = 32; // TODO: need change based on arch
+            constexpr index_t PixelsPerRow = Banks * 4 / sizeof(VDataType);
+            constexpr index_t kKPack       = GetSmemKPackK<Problem>();
+            static_assert(PixelsPerRow % kKPack == 0);
+            constexpr index_t NPerRow    = PixelsPerRow / kKPack;
+            constexpr index_t kNPerBlock = Problem::BlockFmhaShape::kN1;
+            constexpr index_t kKPerBlock = Problem::BlockFmhaShape::kK1;
+            static_assert(kNPerBlock % NPerRow == 0);
+            static_assert(kKPerBlock % kKPack == 0);
+
+            return (kKPerBlock / kKPack) * (kNPerBlock / NPerRow) * (PixelsPerRow + kKPack);
+        }();
+
+        return max(SingleKSize, SingleVSize);
     }
 
     template <typename Problem, ck_tile::index_t IBuf = 0>
