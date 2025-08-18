@@ -7,6 +7,18 @@
 #include "ck_tile/ops/fmha/pipeline/block_fmha_fwd_v3_pipeline_default_policy.hpp"
 #include "ck_tile/ops/reduce/block/block_reduce.hpp"
 
+#define ENABLE_ASM_MARKER 1
+#if ENABLE_ASM_MARKER
+#define ASM_MARKER(marker)               \
+    __builtin_amdgcn_sched_barrier(0);   \
+    asm volatile("; [POYENC] " #marker); \
+    __builtin_amdgcn_sched_barrier(0);
+#else
+#define ASM_MARKER(marker)
+#endif
+
+#define ADD_SBARRIER_FOR_PHASE0 1
+
 namespace ck_tile {
 
 template <typename PipelineProblem, bool kIsMasking>
