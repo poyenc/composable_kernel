@@ -160,28 +160,23 @@ CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c)
 template <typename Problem_, typename Policy_ = BlockFmhaV3PipelineDefaultPolicy>
 struct BlockFmhaFwdV3Pipeline
 {
-    using Problem               = ck_tile::remove_cvref_t<Problem_>;
-    using Policy                = ck_tile::remove_cvref_t<Policy_>;
-    using QDataType             = ck_tile::remove_cvref_t<typename Problem::QDataType>;
-    using KDataType             = ck_tile::remove_cvref_t<typename Problem::KDataType>;
-    using VDataType             = ck_tile::remove_cvref_t<typename Problem::VDataType>;
-    using SaccDataType          = ck_tile::remove_cvref_t<typename Problem::SaccDataType>;
-    using SMPLComputeDataType   = ck_tile::remove_cvref_t<typename Problem::SMPLComputeDataType>;
-    using BiasDataType          = ck_tile::remove_cvref_t<typename Problem::BiasDataType>;
-    using RandValOutputDataType = ck_tile::remove_cvref_t<typename Problem::RandValOutputDataType>;
-    using LSEDataType           = ck_tile::remove_cvref_t<typename Problem::LSEDataType>;
-    using PDataType             = ck_tile::remove_cvref_t<typename Problem::PDataType>;
-    using OaccDataType          = ck_tile::remove_cvref_t<typename Problem::OaccDataType>;
-    using ODataType             = ck_tile::remove_cvref_t<typename Problem::ODataType>;
-    using FmhaMask              = ck_tile::remove_cvref_t<typename Problem::FmhaMask>;
+    using Problem             = ck_tile::remove_cvref_t<Problem_>;
+    using Policy              = ck_tile::remove_cvref_t<Policy_>;
+    using QDataType           = ck_tile::remove_cvref_t<typename Problem::QDataType>;
+    using KDataType           = ck_tile::remove_cvref_t<typename Problem::KDataType>;
+    using VDataType           = ck_tile::remove_cvref_t<typename Problem::VDataType>;
+    using SaccDataType        = ck_tile::remove_cvref_t<typename Problem::SaccDataType>;
+    using SMPLComputeDataType = ck_tile::remove_cvref_t<typename Problem::SMPLComputeDataType>;
+    using LSEDataType         = ck_tile::remove_cvref_t<typename Problem::LSEDataType>;
+    using PDataType           = ck_tile::remove_cvref_t<typename Problem::PDataType>;
+    using OaccDataType        = ck_tile::remove_cvref_t<typename Problem::OaccDataType>;
+    using ODataType           = ck_tile::remove_cvref_t<typename Problem::ODataType>;
+    using FmhaMask            = ck_tile::remove_cvref_t<typename Problem::FmhaMask>;
 
     static_assert(std::is_same_v<SaccDataType, SMPLComputeDataType>,
                   "we will the same dist tensor 'sp_compute' for both gemm0 & softmax");
 
-    using BlockFmhaShape             = ck_tile::remove_cvref_t<typename Problem::BlockFmhaShape>;
-    using VLayout                    = ck_tile::remove_cvref_t<typename BlockFmhaShape::VLayout>;
-    static constexpr bool kQLoadOnce = true; // if q_tile load whole block length (hdim) at once
-    static_assert(kQLoadOnce == Policy::QLoadOnce);
+    using BlockFmhaShape = ck_tile::remove_cvref_t<typename Problem::BlockFmhaShape>;
 
     static constexpr ck_tile::index_t kBlockSize = Problem::kBlockSize;
 
@@ -195,20 +190,12 @@ struct BlockFmhaFwdV3Pipeline
 
     static_assert(kSubQKHeaddim <= 256, "hdim bigger than 256 is not suitable for this pipeline!");
 
-    static constexpr bool kIsGroupMode      = Problem::kIsGroupMode;
-    static constexpr bool kPadSeqLenQ       = Problem::kPadSeqLenQ;
-    static constexpr bool kPadSeqLenK       = Problem::kPadSeqLenK;
-    static constexpr bool kPadHeadDimQ      = Problem::kPadHeadDimQ;
-    static constexpr bool kPadHeadDimV      = Problem::kPadHeadDimV;
-    static constexpr bool kHasLogitsSoftCap = Problem::kHasLogitsSoftCap;
-    static constexpr auto BiasEnum          = Problem::BiasEnum;
-    static constexpr bool kStoreLSE         = Problem::kStoreLSE;
-    static constexpr bool kHasDropout       = Problem::kHasDropout;
-
-    static_assert(!kHasLogitsSoftCap &&
-                  Problem::BiasEnum == ck_tile::BlockAttentionBiasEnum::NO_BIAS && !kHasDropout);
-
-    static_assert(CK_TILE_FMHA_FWD_FAST_EXP2);
+    static constexpr bool kIsGroupMode = Problem::kIsGroupMode;
+    static constexpr bool kPadSeqLenQ  = Problem::kPadSeqLenQ;
+    static constexpr bool kPadSeqLenK  = Problem::kPadSeqLenK;
+    static constexpr bool kPadHeadDimQ = Problem::kPadHeadDimQ;
+    static constexpr bool kPadHeadDimV = Problem::kPadHeadDimV;
+    static constexpr bool kStoreLSE    = Problem::kStoreLSE;
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -216,53 +203,20 @@ struct BlockFmhaFwdV3Pipeline
         kPadHeadDimQ ? 1 : Policy::template GetAlignmentQ<Problem>();
     static constexpr ck_tile::index_t kAlignmentK =
         kPadHeadDimQ ? 1 : Policy::template GetAlignmentK<Problem>();
-    static constexpr ck_tile::index_t kAlignmentV = []() {
-        if constexpr(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>)
-            return kPadHeadDimV ? 1 : Policy::template GetAlignmentV<Problem>();
-        else
-            return kPadSeqLenK ? 1 : Policy::template GetAlignmentV<Problem>();
-    }();
+    static constexpr ck_tile::index_t kAlignmentV =
+        kPadHeadDimV ? 1 : Policy::template GetAlignmentV<Problem>();
 
     static constexpr ck_tile::index_t kAlignmentO =
         kPadHeadDimV ? 1 : Policy::template GetAlignmentO<Problem>();
-    static constexpr ck_tile::index_t kAlignmentBias =
-        kPadSeqLenK ? 1 : Policy::template GetAlignmentBias<Problem>();
 
     static constexpr ck_tile::index_t kBlockPerCu = []() {
         if constexpr(Problem::kBlockPerCu != -1)
             return Problem::kBlockPerCu;
         else
         {
-            if constexpr(kQKHeaddim <= 32)
-            {
-                return 2;
-            }
-            else if constexpr(kQKHeaddim <= 64)
-            {
-                return 3;
-            }
-            else if constexpr(kQKHeaddim <= 128)
-            {
-                if constexpr(BiasEnum == ck_tile::BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
-                    return 1;
-                else
-                    return 1;
-            }
-            else if constexpr(kQKHeaddim <= 256)
-            {
-                return 1;
-            }
-            else
-            {
-                return 1;
-            }
+            return 2;
         }
     }();
-
-    static constexpr const char* name = "qr";
-
-    using DropoutType =
-        std::conditional_t<kHasDropout, ck_tile::BlockDropout, ck_tile::NullBlockDropout>;
 
     CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
     {
