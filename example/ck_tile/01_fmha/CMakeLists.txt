@@ -29,7 +29,7 @@ set(FMHA_FWD_CODE_GEN_COMMON_ARGS
   ${CMAKE_CURRENT_LIST_DIR}/generate.py
   --api ${FMHA_FWD_APIS}
   --optdim 32,64,128,256
-  # --filter fmha_fwd...
+  --filter fmha_fwd_d128_bf16_batch_b128x128x32x128x32x128_r4x1x1_r4x1x1_w32x32x16_w32x32x16_qr_async_vr_psddv_nlogits_nbias_nmask_nlse_ndropout_nskip_nsquant_ntrload
 )
 set(FMHA_BWD_CODE_GEN_COMMON_ARGS
   ${CMAKE_CURRENT_LIST_DIR}/generate.py
@@ -141,7 +141,7 @@ endif()
 list(APPEND EXAMPLE_FMHA_FWD_COMPILE_OPTIONS -Wno-float-equal)
 list(APPEND EXAMPLE_FMHA_BWD_COMPILE_OPTIONS -Wno-float-equal)
 
-target_compile_options(${EXAMPLE_FMHA_FWD} PRIVATE ${EXAMPLE_FMHA_FWD_COMPILE_OPTIONS})
+target_compile_options(${EXAMPLE_FMHA_FWD} PRIVATE ${EXAMPLE_FMHA_FWD_COMPILE_OPTIONS} --save-temps)
 target_compile_options(${EXAMPLE_FMHA_BWD} PRIVATE ${EXAMPLE_FMHA_BWD_COMPILE_OPTIONS})
 
 # TODO: we have to turn off this global prop, otherwise the progress bar generated
