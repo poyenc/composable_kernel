@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
 
+#include "fmha_fwd.hpp" /// TODO: remove dependency on fmha_fwd.hpp
 #include "fmha_fwd_v3.hpp"
 #include "fmha_fwd_v3_impl.hpp"
 
@@ -24,18 +25,20 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
     {
         if(args.mask_type == static_cast<int>(mask_enum::no_mask))
         {
+            using kernel_traits =
+                fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::fp16, false, false>;
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_FP16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_NONE)
-            time = fmha_fwd_v3_dispatch<type_tag<fmha_fwd_v3_args::data_type_enum::fp16, false>>(
-                args, config);
+            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
         else
         {
+            using kernel_traits =
+                fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::fp16, false, true>;
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_FP16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_CAUSAL)
-            time = fmha_fwd_v3_dispatch<type_tag<fmha_fwd_v3_args::data_type_enum::fp16, true>>(
-                args, config);
+            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
     }
@@ -43,18 +46,21 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
     {
         if(args.mask_type == static_cast<int>(mask_enum::no_mask))
         {
+            using kernel_traits =
+                fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::bf16, false, false>;
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_BF16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_NONE)
-            time = fmha_fwd_v3_dispatch<type_tag<fmha_fwd_v3_args::data_type_enum::bf16, false>>(
-                args, config);
+            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
         else
         {
+            using kernel_traits =
+                fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::bf16, false, true>;
+
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_BF16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_CAUSAL)
-            time = fmha_fwd_v3_dispatch<type_tag<fmha_fwd_v3_args::data_type_enum::bf16, true>>(
-                args, config);
+            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
     }

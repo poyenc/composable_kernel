@@ -6,11 +6,15 @@
 
 namespace ck_tile {
 
+using kernel_traits = fmha_fwd_v3_kernel_traits<
+                fmha_fwd_v3_args::data_type_enum::fp16, false, false
+            >;
+
 template <>
-float fmha_fwd_v3_dispatch<type_tag<fmha_fwd_v3_args::data_type_enum::fp16, false>>(
+float fmha_fwd_v3_kernel_dispatch<kernel_traits>(
     const fmha_fwd_v3_args& args, const stream_config& config)
 {
-    return launch<get_kernel_t<FmhaFwdFp16, true, false>>(args, config);
+    return fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config);
 }
 
 }
