@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
 
-#include "fmha_fwd.hpp" /// TODO: remove dependency on fmha_fwd.hpp
 #include "fmha_fwd_v3.hpp"
 #include "fmha_fwd_v3_impl.hpp"
+#include "mask.hpp"
 
 #define DEBUG_DTYPE_FP16 0
 #define DEBUG_DTYPE_BF16 1
