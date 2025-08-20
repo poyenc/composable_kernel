@@ -90,15 +90,13 @@ struct fmha_fwd_v3_kernel_traits
     using epilogue = Default2DEpilogue<
         Default2DEpilogueProblem<typename fmha_fwd_v3_problem_traits<date_type>::acc_dtype,
                                  typename fmha_fwd_v3_problem_traits<date_type>::o_dtype,
-                                 true, // kPadM
-                                 true  // kPadM
+                                 false, // kPadM
+                                 false, // kPadM
+                                 true   // UseRawStore
                                  >>;
 
     using kernel = FmhaFwdV3Kernel<fmha_pipeline, epilogue>;
 };
-
-template <typename KernelTraits>
-float fmha_fwd_v3_kernel_dispatch(const fmha_fwd_v3_args& args, const stream_config& config);
 
 template <typename Kernel>
 float fmha_fwd_v3_kernel_launch(const fmha_fwd_v3_args& args, const stream_config& config)
@@ -140,5 +138,8 @@ float fmha_fwd_v3_kernel_launch(const fmha_fwd_v3_args& args, const stream_confi
     return launch_kernel(config,
                          make_kernel<blocks.x, kBlockPerCu>(Kernel{}, grids, blocks, 0, kargs));
 }
+
+template <typename KernelTraits>
+float fmha_fwd_v3_kernel_dispatch(const fmha_fwd_v3_args& args, const stream_config& config);
 
 } // namespace ck_tile
