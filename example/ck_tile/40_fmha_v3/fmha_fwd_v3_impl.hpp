@@ -19,6 +19,15 @@
 
 #include "fmha_fwd_v3.hpp"
 
+#define INST_FMHA_FWD_V3_DISPATCH(kernel_traits)                                               \
+    template <>                                                                                \
+    std::pair<bool, float> fmha_fwd_v3_kernel_dispatch<kernel_traits>(                         \
+        const fmha_fwd_v3_args& args, const stream_config& config)                             \
+    {                                                                                          \
+        return std::make_pair(true,                                                            \
+                              fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config)); \
+    }
+
 namespace ck_tile {
 
 template <fmha_fwd_v3_args::data_type_enum DataType>

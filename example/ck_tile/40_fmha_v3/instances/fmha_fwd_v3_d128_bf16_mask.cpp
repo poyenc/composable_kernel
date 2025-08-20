@@ -9,11 +9,6 @@ namespace ck_tile {
 using kernel_traits =
     fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::bf16, false, true>;
 
-template <>
-std::pair<bool, float> fmha_fwd_v3_kernel_dispatch<kernel_traits>(const fmha_fwd_v3_args& args,
-                                                                  const stream_config& config)
-{
-    return std::make_pair(true, fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config));
-}
+INST_FMHA_FWD_V3_DISPATCH(kernel_traits)
 
 } // namespace ck_tile
