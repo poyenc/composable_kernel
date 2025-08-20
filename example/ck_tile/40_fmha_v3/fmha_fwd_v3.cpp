@@ -16,7 +16,7 @@
 
 namespace ck_tile {
 
-float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
+std::pair<bool, float> fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
 {
     if(args.data_type == fmha_fwd_v3_args::data_type_enum::fp16)
     {
@@ -62,7 +62,7 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
         }
     }
 
-    return -1.f;
+    return std::make_pair(false, -1.f);
 }
 
 } // namespace ck_tile

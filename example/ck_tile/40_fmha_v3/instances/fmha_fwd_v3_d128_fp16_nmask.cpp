@@ -10,10 +10,10 @@ using kernel_traits =
     fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::fp16, false, false>;
 
 template <>
-float fmha_fwd_v3_kernel_dispatch<kernel_traits>(const fmha_fwd_v3_args& args,
-                                                 const stream_config& config)
+std::pair<bool, float> fmha_fwd_v3_kernel_dispatch<kernel_traits>(const fmha_fwd_v3_args& args,
+                                                                  const stream_config& config)
 {
-    return fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config);
+    return std::make_pair(true, fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config));
 }
 
 } // namespace ck_tile

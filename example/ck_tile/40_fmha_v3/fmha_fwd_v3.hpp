@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include "ck_tile/core/numeric/integer.hpp"
 #include "ck_tile/host/stream_config.hpp"
 
@@ -54,6 +56,9 @@ struct fmha_fwd_v3_args
     index_t batch_stride_o;
 };
 
-float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config);
+// return value:
+//   first  = whether the kernel was launched (true = launched, false = skipped)
+//   second = elapsed time (ms) of the kernel launch, valid only if first == true
+std::pair<bool, float> fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config);
 
 } // namespace ck_tile

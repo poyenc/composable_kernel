@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include "ck_tile/core/numeric/bfloat16.hpp"
 #include "ck_tile/core/numeric/half.hpp"
 #include "ck_tile/core/container/sequence.hpp"
@@ -139,7 +141,11 @@ float fmha_fwd_v3_kernel_launch(const fmha_fwd_v3_args& args, const stream_confi
                          make_kernel<blocks.x, kBlockPerCu>(Kernel{}, grids, blocks, 0, kargs));
 }
 
+// return value:
+//   first  = whether the kernel was launched (true = launched, false = skipped)
+//   second = elapsed time (ms) of the kernel launch, valid only if first == true
 template <typename KernelTraits>
-float fmha_fwd_v3_kernel_dispatch(const fmha_fwd_v3_args& args, const stream_config& config);
+std::pair<bool, float> fmha_fwd_v3_kernel_dispatch(const fmha_fwd_v3_args& args,
+                                                   const stream_config& config);
 
 } // namespace ck_tile
