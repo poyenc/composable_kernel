@@ -19,41 +19,41 @@ struct fmha_fwd_v3_args
     data_type_enum data_type;
     // bool is_varlen;
 
-    ck_tile::index_t batch;
-    ck_tile::index_t seqlen_q;
-    ck_tile::index_t seqlen_k;
-    ck_tile::index_t hdim_q;
-    ck_tile::index_t hdim_v;
-    ck_tile::index_t nhead_q;
-    ck_tile::index_t nhead_k;
+    index_t batch;
+    index_t seqlen_q;
+    index_t seqlen_k;
+    index_t hdim_q;
+    index_t hdim_v;
+    index_t nhead_q;
+    index_t nhead_k;
 
     float scale_s;
 
-    ck_tile::index_t window_size_left;
-    ck_tile::index_t window_size_right;
-    ck_tile::index_t mask_type;
+    index_t window_size_left;
+    index_t window_size_right;
+    index_t mask_type;
 
     const void* q_ptr;
-    ck_tile::index_t stride_q;
-    ck_tile::index_t nhead_stride_q;
-    ck_tile::index_t batch_stride_q;
+    index_t stride_q;
+    index_t nhead_stride_q;
+    index_t batch_stride_q;
 
     const void* k_ptr;
-    ck_tile::index_t stride_k;
-    ck_tile::index_t nhead_stride_k;
-    ck_tile::index_t batch_stride_k;
+    index_t stride_k;
+    index_t nhead_stride_k;
+    index_t batch_stride_k;
 
     const void* v_ptr;
-    ck_tile::index_t stride_v;
-    ck_tile::index_t nhead_stride_v;
-    ck_tile::index_t batch_stride_v;
+    index_t stride_v;
+    index_t nhead_stride_v;
+    index_t batch_stride_v;
 
     void* o_ptr;
-    ck_tile::index_t stride_o;
-    ck_tile::index_t nhead_stride_o;
-    ck_tile::index_t batch_stride_o;
+    index_t stride_o;
+    index_t nhead_stride_o;
+    index_t batch_stride_o;
 };
 
-float fmha_fwd_v3(const ck_tile::fmha_fwd_v3_args& args, const ck_tile::stream_config& config);
+float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config);
 
 } // namespace ck_tile

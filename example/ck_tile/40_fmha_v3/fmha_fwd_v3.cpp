@@ -3,7 +3,7 @@
 
 #include "fmha_fwd.hpp" /// TODO: remove dependency on fmha_fwd.hpp
 #include "fmha_fwd_v3.hpp"
-#include "fmha_fwd_v3.ipp"
+#include "fmha_fwd_v3_impl.hpp"
 
 #define DEBUG_DTYPE_FP16 0
 #define DEBUG_DTYPE_BF16 1
@@ -18,9 +18,6 @@ namespace ck_tile {
 
 float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
 {
-    float time = 0.0;
-
-    // TODO: compile fp16/bf16, masking=true/false kernels separately
     if(args.data_type == fmha_fwd_v3_args::data_type_enum::fp16)
     {
         if(args.mask_type == static_cast<int>(mask_enum::no_mask))
@@ -29,7 +26,7 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
                 fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::fp16, false, false>;
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_FP16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_NONE)
-            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
+            return fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
         else
@@ -38,7 +35,7 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
                 fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::fp16, false, true>;
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_FP16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_CAUSAL)
-            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
+            return fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
     }
@@ -50,7 +47,7 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
                 fmha_fwd_v3_kernel_traits<fmha_fwd_v3_args::data_type_enum::bf16, false, false>;
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_BF16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_NONE)
-            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
+            return fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
         else
@@ -60,12 +57,12 @@ float fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
 
 #if !DEBUG_SINGLE_INST || \
     (DEBUG_SINGLE_INST_DTYPE == DEBUG_DTYPE_BF16 && DEBUG_SINGLE_INST_MASK == DEBUG_MASK_CAUSAL)
-            time = fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
+            return fmha_fwd_v3_kernel_dispatch<kernel_traits>(args, config);
 #endif
         }
     }
 
-    return 0.0;
+    return -1.f;
 }
 
 } // namespace ck_tile
