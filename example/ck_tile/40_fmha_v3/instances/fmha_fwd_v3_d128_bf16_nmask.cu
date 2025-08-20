@@ -2,7 +2,7 @@
 // Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 #include "fmha_fwd_v3.hpp"
-#include "fmha_fwd_v3.ipp"
+#include "fmha_fwd_v3_impl.hpp"
 
 namespace ck_tile {
 

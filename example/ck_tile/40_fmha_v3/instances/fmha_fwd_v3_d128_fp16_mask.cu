@@ -2,7 +2,7 @@
 // Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 #include "fmha_fwd_v3.hpp"
-#include "fmha_fwd_v3.ipp"
+#include "fmha_fwd_v3_impl.hpp"
 
 namespace ck_tile {
 
@@ -13,7 +13,7 @@ template <>
 float fmha_fwd_v3_kernel_dispatch<kernel_traits>(const fmha_fwd_v3_args& args,
                                                  const stream_config& config)
 {
-    return std::make_pair(true, fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config));
+    return fmha_fwd_v3_kernel_launch<kernel_traits::kernel>(args, config);
 }
 
 } // namespace ck_tile
