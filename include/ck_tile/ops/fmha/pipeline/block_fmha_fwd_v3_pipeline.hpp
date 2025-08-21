@@ -19,6 +19,17 @@
 
 #define ADD_SBARRIER_FOR_PHASE0 1
 
+#define WARP_ID 0
+#define LANE_ID 0
+
+#define ENABLE_DEBUG_STMTS 1
+#if ENABLE_DEBUG_STMTS
+#define DEBUG_STMTS \
+    if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == LANE_ID)
+#else
+#define DEBUG_STMTS if constexpr(false)
+#endif
+
 namespace ck_tile {
 
 template <typename PipelineProblem, bool kIsMasking>
@@ -261,36 +272,6 @@ struct BlockFmhaFwdV3Pipeline
         return make_tile_window(tensor_view, desc.get_lengths(), {0, 0});
     }
 
-#define WARP_ID 0
-#define LANE_ID 0
-
-#define ENABLE_DEBUG_STMTS 1
-#if ENABLE_DEBUG_STMTS
-#define DEBUG_STMTS \
-    if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == LANE_ID)
-#else
-#define DEBUG_STMTS if constexpr(false)
-#endif
-
-#define ENABLE_DEBUG_ASM_MAKER 1
-#if ENABLE_DEBUG_ASM_MAKER
-#define ASM_MARKER(desc)                   \
-    do                                     \
-    {                                      \
-        __builtin_amdgcn_sched_barrier(0); \
-        asm volatile("; [POYENC] " desc);  \
-        __builtin_amdgcn_sched_barrier(0); \
-    } while(false)
-#else
-#define ASM_MARKER(desc) \
-    do                   \
-    {                    \
-    } while(false)
-#endif
-
-#define ENABLE_TRACE 0
-#define ENABLE_TENSOR_DUMP 0
-
     // vmcnt=0~63, lgkmcnt=0~15, expcnt=0~7
     template <uint16_t Vmcnt, uint8_t Lgkmcnt, uint8_t Expcnt = 7>
     CK_TILE_DEVICE static constexpr void s_waitcnt()
@@ -328,12 +309,12 @@ struct BlockFmhaFwdV3Pipeline
     CK_TILE_DEVICE auto operator()(const QDramBlockWindowTmp& q_dram_block_window_tmp, // M0*K0 tile
                                    const QElementFunction& q_element_func,
                                    const KDramBlockWindowTmp& k_dram_block_window_tmp, // N0*K0 tile
-                                   const KElementFunction& k_element_func,
+                                   [[maybe_unused]] const KElementFunction& k_element_func,
                                    const VDramBlockWindowTmp& v_dram_block_window_tmp, // N1*K1 tile
-                                   const VElementFunction& v_element_func,
+                                   [[maybe_unused]] const VElementFunction& v_element_func,
                                    LSEDramBlockWindowTmp& lse_dram_window_tmp, // M0*1 tile
                                    const LSEElementFunction& lse_element_func,
-                                   const SAccElementFunction& s_acc_element_func,
+                                   [[maybe_unused]] const SAccElementFunction& s_acc_element_func,
                                    const PComputeElementFunction& p_compute_element_func,
                                    const OAccElementFunction& o_acc_element_func,
                                    FmhaMask mask,
@@ -669,7 +650,6 @@ struct BlockFmhaFwdV3Pipeline
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
-                constexpr auto i_idx = make_tuple(idx0);
                 sweep_tile_span(p_spans[number<1>{}], [&](auto idx1) {
                     constexpr auto i_j_idx        = make_tuple(idx0, idx1);
                     sp_delta(sp_reg_idx)(i_j_idx) = detail::fma_impl_vsv(
@@ -683,7 +663,6 @@ struct BlockFmhaFwdV3Pipeline
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
-                constexpr auto i_idx = make_tuple(idx0);
                 sweep_tile_span(p_spans[number<1>{}], [&](auto idx1) {
                     constexpr auto i_j_idx = make_tuple(idx0, idx1);
                     sp(sp_reg_idx).sp_compute(i_j_idx) =
@@ -1063,7 +1042,6 @@ struct BlockFmhaFwdV3Pipeline
             fmha_post_process(number<0>{});
         }
 
-    label_write_out:
         // store lse
         if constexpr(kStoreLSE)
         {

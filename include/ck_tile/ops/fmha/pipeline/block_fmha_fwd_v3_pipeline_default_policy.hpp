@@ -286,7 +286,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
             {
                 /// NOTICE: in order to use load_tile_transpose() later for V tile, we cannot use
                 /// WarpGemmMfmaF16F16F32M32N32K16SwizzleBTransposedCDistribution here
-                return WarpGemmMfmaF16F16F32M32N32K16TransposedCDistribution{};
+                return WarpGemmMfmaF16F16F32M32N32K16TransposedCDistribution<>{};
             }
             else if constexpr(std::is_same_v<typename Problem::QDataType, bf16_t> &&
                               std::is_same_v<typename Problem::KDataType, bf16_t> &&
@@ -294,7 +294,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
             {
                 /// NOTICE: in order to use load_tile_transpose() later for V tile, we cannot use
                 /// WarpGemmMfmaBf16Bf16F32M32N32K16SwizzleBTransposedCDistribution here
-                return WarpGemmMfmaBf16Bf16F32M32N32K16TransposedCDistribution{};
+                return WarpGemmMfmaBf16Bf16F32M32N32K16TransposedCDistribution<>{};
             }
         }();
 
@@ -362,7 +362,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NumWarps   = Problem::BlockFmhaShape::NumWarps;
         constexpr index_t WarpSize   = ck_tile::get_warp_size();
 
-        constexpr index_t KPack   = GetSmemKPackK<Problem>(); // this is for lds
+        [[maybe_unused]] constexpr index_t KPack = GetSmemKPackK<Problem>(); // this is for lds
         constexpr index_t KVector = GetAlignmentK<Problem>(); // this is for global load
         constexpr index_t kPad =
             kKLdsPadInBytes /
@@ -510,7 +510,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NumWarps   = Problem::BlockFmhaShape::NumWarps;
         constexpr index_t WarpSize   = ck_tile::get_warp_size();
 
-        constexpr index_t KPack   = GetSmemVPackK<Problem>(); // this is for lds
+        [[maybe_unused]] constexpr index_t KPack = GetSmemVPackK<Problem>(); // this is for lds
         constexpr index_t KVector = GetAlignmentV<Problem>(); // this is for global load
         constexpr index_t kPad =
             kVLdsPadInBytes /

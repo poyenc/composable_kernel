@@ -56,10 +56,10 @@ struct BlockGemmARegBRegCRegV2
         constexpr index_t NIterPerWarp = NPerBlock / (NWarp * WG::kN);
         constexpr index_t KIterPerWarp = KPerBlock / WG::kK;
 
-        constexpr index_t NPerBlockPerIter = NPerBlock / NIterPerWarp;
-        constexpr index_t KPerBlockPerIter = KPerBlock / KIterPerWarp;
+        [[maybe_unused]] constexpr index_t NPerBlockPerIter = NPerBlock / NIterPerWarp;
+        [[maybe_unused]] constexpr index_t KPerBlockPerIter = KPerBlock / KIterPerWarp;
 
-        const index_t iNWarp = get_warp_id() % NWarp;
+        [[maybe_unused]] const index_t iNWarp = get_warp_id() % NWarp;
 
         constexpr auto c_block_outer_dstr_encoding = tile_distribution_encoding<
             sequence<>,
