@@ -160,7 +160,11 @@ target_sources(${EXAMPLE_FMHA_FWD_V3} PRIVATE
 )
 
 set(EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS)
-list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS -Wno-undefined-func-template --save-temps)
+list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
+  -fgpu-flush-denormals-to-zero
+  -Wno-undefined-func-template
+  --save-temps
+)
 target_compile_options(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS})
 
 # TODO: we have to turn off this global prop, otherwise the progress bar generated
