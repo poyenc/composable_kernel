@@ -24,12 +24,12 @@ struct fmha_fwd_v3_args
     index_t batch;
     index_t seqlen_q;
     index_t seqlen_k;
-    index_t hdim_q;
-    index_t hdim_v;
     index_t nhead_q;
-    index_t nhead_k;
+    index_t nhead_kv;
+    index_t hdim_qk;
+    index_t hdim_v;
 
-    float scale_s;
+    float softmax_scale;
 
     index_t window_size_left;
     index_t window_size_right;
