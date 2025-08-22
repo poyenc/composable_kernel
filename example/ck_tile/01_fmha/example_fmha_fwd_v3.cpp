@@ -310,8 +310,9 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
     }
     std::cout << "] b:" << problem.batch << ", h:" << problem.nhead_q << "/" << problem.nhead_kv
               << ", s:" << problem.seqlen_q << "/" << problem.seqlen_k << ", d:" << problem.hdim
-              << ", scale_s:" << problem.softmax_scale << std::fixed << ", " << std::setprecision(3)
-              << time << " ms, " << std::setprecision(2) << tflops << " TFlops" << std::endl;
+              << ", scale_s:" << problem.softmax_scale << ", mask:" << problem.mask << std::fixed
+              << ", " << std::setprecision(3) << time << " ms, " << std::setprecision(2) << tflops
+              << " TFlops" << std::endl;
 
     return true;
 }
