@@ -217,6 +217,10 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
     ck_tile::DeviceMem v_buf(v.get_element_space_size_in_bytes());
     ck_tile::DeviceMem o_buf(q.get_element_space_size_in_bytes());
 
+    q_buf.ToDevice(q.data());
+    k_buf.ToDevice(k.data());
+    v_buf.ToDevice(v.data());
+
     ck_tile::fmha_fwd_v3_args args;
 
     args.data_type     = problem.data_type;
