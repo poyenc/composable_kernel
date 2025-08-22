@@ -18,6 +18,7 @@
 #include <ck_tile/host/host_tensor.hpp>
 
 #include "fmha_fwd_v3.hpp"
+#include "mask.hpp"
 
 auto parse_cmd_args(int argc, char* argv[]) -> std::pair<bool, ck_tile::ArgParser>
 {
@@ -34,10 +35,10 @@ auto parse_cmd_args(int argc, char* argv[]) -> std::pair<bool, ck_tile::ArgParse
         .insert("d", "128", "head dim for q & k")
         .insert("scale_s", "0", "scale factor of S. 0 means equal to 1/sqrt(hdim)")
         .insert("iperm",
-                "1",
+                "0",
                 "permute input\n"
                 "if true, will be b*h*s*d, else b*s*h*d")
-        .insert("operm", "1", "permute output")
+        .insert("operm", "0", "permute output")
         .insert("mask",
                 "0",
                 "0: no mask, 1: top-left(same as 't'), 2:bottom-right(same as 'b')\n"
@@ -102,6 +103,7 @@ struct Problem
         softmax_scale = args.get_float("scale_s");
         if(softmax_scale == .0f)
             softmax_scale = 1.0 / ck_tile::sqrt(static_cast<float>(hdim));
+        mask = mask_info::decode(args.get_str("mask"), seqlen_q, seqlen_k);
 
         input_layout  = args.get_int("iperm") == 1 ? TensorLayout::bhsd : TensorLayout::bshd;
         output_layout = args.get_int("operm") == 1 ? TensorLayout::bhsd : TensorLayout::bshd;
@@ -163,6 +165,7 @@ struct Problem
     ck_tile::index_t nhead_kv;
     ck_tile::index_t hdim;
     float softmax_scale;
+    mask_info mask;
     TensorLayout input_layout;
     TensorLayout output_layout;
 };
@@ -226,6 +229,10 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
     args.hdim_v        = problem.hdim;
     args.softmax_scale = problem.softmax_scale;
 
+    args.window_size_left  = problem.mask.left;
+    args.window_size_right = problem.mask.right;
+    args.mask_type         = static_cast<ck_tile::index_t>(problem.mask.type);
+
     // bshd: (batch, seqlen_q, nhead_q, hdim)
     // bhsd: (batch, nhead_q, seqlen_q, hdim)
     args.mask_type = 0;
@@ -277,18 +284,34 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
         return false;
     }
 
-    /// TODO: consider the real flop if we have mask
-    std::size_t flop =
-        4 * problem.batch * problem.nhead_q * problem.seqlen_q * problem.seqlen_k * problem.hdim;
-
+    std::size_t flop = [&] {
+        if(problem.mask.type == mask_enum::no_mask)
+        {
+            return 4 * problem.batch * problem.nhead_q * problem.seqlen_q * problem.seqlen_k *
+                   problem.hdim;
+        }
+        else
+        {
+            /// FIXME: Use a more accurate method; for now, we’re just dividing the flop by 2.
+            return 2 * problem.batch * problem.nhead_q * problem.seqlen_q * problem.seqlen_k *
+                   problem.hdim;
+        }
+    }();
     float tflops = static_cast<float>(flop) / 1.e9 / time;
 
-    std::cout << "[" << problem.data_type << "|" << problem.input_layout << "-"
-              << problem.output_layout << "] b:" << problem.batch << ", h:" << problem.nhead_q
-              << "/" << problem.nhead_kv << ", s:" << problem.seqlen_q << "/" << problem.seqlen_k
-              << ", d:" << problem.hdim << ", scale_s:" << problem.softmax_scale << std::fixed
-              << ", " << std::setprecision(3) << time << " ms, " << std::setprecision(2) << tflops
-              << " TFlops" << std::endl;
+    std::cout << "[" << problem.data_type << "|";
+    if(problem.input_layout == problem.output_layout)
+    {
+        std::cout << problem.input_layout;
+    }
+    else
+    {
+        std::cout << problem.input_layout << "-" << problem.output_layout;
+    }
+    std::cout << "] b:" << problem.batch << ", h:" << problem.nhead_q << "/" << problem.nhead_kv
+              << ", s:" << problem.seqlen_q << "/" << problem.seqlen_k << ", d:" << problem.hdim
+              << ", scale_s:" << problem.softmax_scale << std::fixed << ", " << std::setprecision(3)
+              << time << " ms, " << std::setprecision(2) << tflops << " TFlops" << std::endl;
 
     return true;
 }
