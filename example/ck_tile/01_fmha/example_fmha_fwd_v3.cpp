@@ -197,9 +197,9 @@ auto generate_qkv(const Problem& problem,
     ck_tile::HostTensor<DataType> k(problem.get_key_shape());
     ck_tile::HostTensor<DataType> v(problem.get_value_shape());
 
-    ck_tile::FillUniformDistribution<DataType>{0.f, 1.f, seed}(q);
-    ck_tile::FillUniformDistribution<DataType>{0.f, 1.f, seed}(k);
-    ck_tile::FillUniformDistribution<DataType>{0.f, 1.f, seed}(v);
+    ck_tile::FillNormalDistribution<DataType>{0.f, 3.f, seed}(q);
+    ck_tile::FillNormalDistribution<DataType>{0.f, 3.f, seed}(k);
+    ck_tile::FillNormalDistribution<DataType>{0.f, 3.f, seed}(v);
 
     return std::make_tuple(q, k, v);
 }
@@ -272,6 +272,7 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
 
     auto [result, time] = ck_tile::fmha_fwd_v3(args, stream_config);
 
+    /// TODO: consider the real flop if we have mask
     std::size_t flop =
         4 * problem.batch * problem.nhead_q * problem.seqlen_q * problem.seqlen_k * problem.hdim;
 
