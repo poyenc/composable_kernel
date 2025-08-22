@@ -271,6 +271,11 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
                                          run_config.kernel_repeat};
 
     auto [result, time] = ck_tile::fmha_fwd_v3(args, stream_config);
+    if(!result)
+    {
+        std::cerr << "faild to run fmha_fwd_v3()" << std::endl;
+        return false;
+    }
 
     /// TODO: consider the real flop if we have mask
     std::size_t flop =
@@ -285,7 +290,7 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
               << ", " << std::setprecision(3) << time << " ms, " << std::setprecision(2) << tflops
               << " TFlops" << std::endl;
 
-    return result;
+    return true;
 }
 
 int main(int argc, char* argv[])
