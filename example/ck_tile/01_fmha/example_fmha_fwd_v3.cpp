@@ -239,7 +239,6 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
 
     // bshd: (batch, seqlen_q, nhead_q, hdim)
     // bhsd: (batch, nhead_q, seqlen_q, hdim)
-    args.mask_type = 0;
     args.q_ptr     = q_buf.GetDeviceBuffer();
     args.stride_q =
         problem.input_layout == TensorLayout::bshd ? problem.nhead_q * problem.hdim : problem.hdim;
