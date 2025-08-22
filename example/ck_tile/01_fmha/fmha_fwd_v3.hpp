@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <iostream>
 #include <utility>
 
 #include "ck_tile/core/numeric/integer.hpp"
@@ -55,6 +56,8 @@ struct fmha_fwd_v3_args
     index_t nhead_stride_o;
     index_t batch_stride_o;
 };
+
+std::ostream& operator<<(std::ostream& stream, const fmha_fwd_v3_args::data_type_enum& data_type);
 
 // return value:
 //   first  = whether the kernel was launched (true = launched, false = skipped)

@@ -16,6 +16,16 @@
 
 namespace ck_tile {
 
+std::ostream& operator<<(std::ostream& stream, const fmha_fwd_v3_args::data_type_enum& data_type)
+{
+    switch(data_type)
+    {
+    case fmha_fwd_v3_args::data_type_enum::fp16: return stream << "fp16";
+    case fmha_fwd_v3_args::data_type_enum::bf16: return stream << "bf16";
+    default: return stream << "unknown";
+    }
+}
+
 std::pair<bool, float> fmha_fwd_v3(const fmha_fwd_v3_args& args, const stream_config& config)
 {
     if(args.data_type == fmha_fwd_v3_args::data_type_enum::fp16)

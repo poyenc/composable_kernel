@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
 
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -13,6 +14,7 @@
 #include <ck_tile/core/numeric/math.hpp>
 #include <ck_tile/host/arg_parser.hpp>
 #include <ck_tile/host/device_memory.hpp>
+#include <ck_tile/host/fill.hpp>
 #include <ck_tile/host/host_tensor.hpp>
 
 #include "fmha_fwd_v3.hpp"
@@ -66,14 +68,14 @@ enum class TensorLayout
     bshd,
 };
 
-std::string to_string(TensorLayout layout)
+std::ostream& operator<<(std::ostream& stream, TensorLayout layout)
 {
     switch(layout)
     {
-    case TensorLayout::bhsd: return "bhsd";
-    case TensorLayout::bshd: return "bshd";
+    case TensorLayout::bhsd: return stream << "bhsd";
+    case TensorLayout::bshd: return stream << "bshd";
+    default: return stream << "unknown";
     }
-    return "unknown";
 }
 
 struct Problem
@@ -195,11 +197,15 @@ auto generate_qkv(const Problem& problem,
     ck_tile::HostTensor<DataType> k(problem.get_key_shape());
     ck_tile::HostTensor<DataType> v(problem.get_value_shape());
 
+    ck_tile::FillUniformDistribution<DataType>{0.f, 1.f, seed}(q);
+    ck_tile::FillUniformDistribution<DataType>{0.f, 1.f, seed}(k);
+    ck_tile::FillUniformDistribution<DataType>{0.f, 1.f, seed}(v);
+
     return std::make_tuple(q, k, v);
 }
 
 template <typename DataType>
-bool run_kernel(const Problem& problem, const RunConfig& run_config)
+bool run_impl(const Problem& problem, const RunConfig& run_config)
 {
     auto [q, k, v] = generate_qkv<DataType>(problem, run_config.seed);
 
@@ -265,7 +271,19 @@ bool run_kernel(const Problem& problem, const RunConfig& run_config)
                                          run_config.kernel_repeat};
 
     auto [result, time] = ck_tile::fmha_fwd_v3(args, stream_config);
-    std::cout << "time: " << time << " ms" << std::endl;
+
+    std::size_t flop =
+        4 * problem.batch * problem.nhead_q * problem.seqlen_q * problem.seqlen_k * problem.hdim;
+
+    float tflops = static_cast<float>(flop) / 1.e9 / time;
+
+    std::cout << "[" << problem.data_type << "|" << problem.input_layout << "-"
+              << problem.output_layout << "] b:" << problem.batch << ", h:" << problem.nhead_q
+              << "/" << problem.nhead_kv << ", s:" << problem.seqlen_q << "/" << problem.seqlen_k
+              << ", d:" << problem.hdim << ", scale_s:" << problem.softmax_scale << std::fixed
+              << ", " << std::setprecision(3) << time << " ms, " << std::setprecision(2) << tflops
+              << " TFlops" << std::endl;
+
     return result;
 }
 
@@ -277,24 +295,19 @@ int main(int argc, char* argv[])
         std::cerr << "failed to parse command line arguments" << std::endl;
     }
 
-    try
-    {
-        Problem problem(args);
-        RunConfig run_config(args);
+    Problem problem(args);
+    RunConfig run_config(args);
 
-        return ![&] {
-            if(problem.data_type == ck_tile::fmha_fwd_v3_args::data_type_enum::fp16)
-            {
-                return run_kernel<ck_tile::fp16_t>(problem, run_config);
-            }
-            else
-            {
-                return run_kernel<ck_tile::bf16_t>(problem, run_config);
-            }
-        }();
-    }
-    catch(const std::exception& e)
-    {
-        std::cerr << ": " << e.what() << std::endl;
-    }
+    const auto run = [&] {
+        if(problem.data_type == ck_tile::fmha_fwd_v3_args::data_type_enum::fp16)
+        {
+            return run_impl<ck_tile::fp16_t>(problem, run_config);
+        }
+        else
+        {
+            return run_impl<ck_tile::bf16_t>(problem, run_config);
+        }
+    };
+
+    return !run();
 }
