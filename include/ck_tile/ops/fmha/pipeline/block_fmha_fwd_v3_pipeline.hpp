@@ -160,11 +160,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
 namespace detail {
 CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c)
 {
-    float result;
-    asm volatile("v_fma_f32 %[result], %[a], %[b], %[c]"
-                 : [result] "=v"(result)
-                 : [a] "v"(a), [b] "s"(b), [c] "v"(c));
-    return result;
+    return a * b + c;
 }
 } // namespace detail
 
