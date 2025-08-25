@@ -430,9 +430,20 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
         return true;
     }
 
-    /// TODO: Handle different layout correctly
+    // transpose tensor descriptors from bhsd to bshd if necessary
+    if(problem.input_layout != TensorLayout::bshd)
+    {
+        q = q.transpose({0, 2, 1, 3});
+        k = k.transpose({0, 2, 1, 3});
+        v = v.transpose({0, 2, 1, 3});
+    }
 
     ck_tile::HostTensor<DataType> o_ref(problem.get_output_shape());
+    if(problem.output_layout != TensorLayout::bshd)
+    {
+        o_ref = o_ref.transpose({0, 2, 1, 3});
+    }
+
     host::fmha_fwd<float, DataType>(q,
                                     k,
                                     v,
