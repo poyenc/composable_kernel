@@ -426,13 +426,12 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
 
     if(!run_config.verify)
     {
-        return false;
+        return true;
     }
 
     /// TODO: Handle different layout correctly
 
     ck_tile::HostTensor<DataType> o_ref(problem.get_query_shape());
-    /// TODO: Fix computation error in host::fmha_fwd()
     host::fmha_fwd<float, DataType>(q,
                                     k,
                                     v,
@@ -441,15 +440,18 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
                                     ck_tile::identity{},
                                     ck_tile::identity{},
                                     ck_tile::identity{},
-                                    ck_tile::scales<float>(problem.softmax_scale));
+                                    ck_tile::scales{problem.softmax_scale});
 
     ck_tile::HostTensor<DataType> o(problem.get_query_shape());
     o_buf.FromDevice(o.data());
 
-    /// TODO: Select torrence based on data type
-    double rtol = 1e-3;
-    double atol = 1e-3;
-    return ck_tile::check_err(o, o_ref, std::string("OUT Error: Incorrect results!"), rtol, atol);
+    const auto [rtol, atol] = [&] {
+        if constexpr(std::is_same_v<DataType, ck_tile::fp16_t>)
+            return std::make_tuple(1e-3, 1e-3);
+        else
+            return std::make_tuple(1e-2, 1e-2);
+    }();
+    return ck_tile::check_err(o, o_ref, std::string("found incorrect results!"), rtol, atol);
 }
 
 int main(int argc, char* argv[])
