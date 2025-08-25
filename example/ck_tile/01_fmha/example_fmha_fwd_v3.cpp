@@ -12,11 +12,17 @@
 #include <ck_tile/core/numeric/bfloat16.hpp>
 #include <ck_tile/core/numeric/half.hpp>
 #include <ck_tile/core/numeric/math.hpp>
+#include <ck_tile/core/utility/functional.hpp>
 #include <ck_tile/host/arg_parser.hpp>
 #include <ck_tile/host/device_memory.hpp>
 #include <ck_tile/host/fill.hpp>
+#include <ck_tile/host/check_err.hpp>
 #include <ck_tile/host/host_tensor.hpp>
+#include <ck_tile/host/reference/reference_batched_gemm.hpp>
+#include <ck_tile/host/reference/reference_batched_masking.hpp>
+#include <ck_tile/host/reference/reference_batched_softmax.hpp>
 
+#include "fmha_fwd.hpp"
 #include "fmha_fwd_v3.hpp"
 #include "mask.hpp"
 
@@ -51,7 +57,7 @@ auto parse_cmd_args(int argc, char* argv[]) -> std::pair<bool, ck_tile::ArgParse
                 "causal, positive is swa\n"
                 "'g:y,x', generic attention mask coordinate with y/x size (only debug purpose for "
                 "now)")
-        .insert("v", "1", "0:no validation, 2:cpu validation")
+        .insert("v", "1", "0:no verify, 1:verify")
         .insert("seed",
                 "11939",
                 "random seed used for initializing input tensors. 0 for "
@@ -182,11 +188,13 @@ struct RunConfig
 
         kernel_warmup = args.get_int("warmup");
         kernel_repeat = args.get_int("repeat");
+        verify        = args.get_bool("v");
     }
 
     std::optional<uint32_t> seed;
     int kernel_warmup;
     int kernel_repeat;
+    bool verify;
 };
 
 template <typename DataType>
@@ -206,6 +214,104 @@ auto generate_qkv(const Problem& problem,
 
     return std::make_tuple(q, k, v);
 }
+
+namespace host {
+template <typename AccDataType,
+          typename PDataType,
+          typename QDataType,
+          typename KDataType,
+          typename VDataType,
+          typename ODataType,
+          typename QElementOp,
+          typename KElementOp,
+          typename VElementOp,
+          typename SAccElementOp>
+CK_TILE_HOST void fmha_fwd(const ck_tile::HostTensor<QDataType>& q_bshd,
+                           const ck_tile::HostTensor<KDataType>& k_bshd,
+                           const ck_tile::HostTensor<VDataType>& v_bshd,
+                           const mask_info& mask,
+                           ck_tile::HostTensor<ODataType>& o_bshd,
+                           const QElementOp& q_element_op        = {},
+                           const KElementOp& k_element_op        = {},
+                           const VElementOp& v_element_op        = {},
+                           const SAccElementOp& s_acc_element_op = {})
+{
+    const int batch_size = q_bshd.mDesc.get_lengths()[0];
+    const int seqlen_q   = q_bshd.mDesc.get_lengths()[1];
+    const int seqlen_kv  = k_bshd.mDesc.get_lengths()[1];
+    const int nhead_q    = q_bshd.mDesc.get_lengths()[2];
+    const int nhead_kv   = k_bshd.mDesc.get_lengths()[2];
+    const int hdim_qk    = q_bshd.mDesc.get_lengths()[3];
+    const int hdim_v     = v_bshd.mDesc.get_lengths()[3];
+
+    const int nr = nhead_q / nhead_kv;
+
+    ck_tile::HostTensor<QDataType> q_host_ref({nhead_q, seqlen_q, hdim_qk});
+    ck_tile::HostTensor<KDataType> k_host_ref({nhead_q, seqlen_kv, hdim_qk});
+    ck_tile::HostTensor<VDataType> v_host_ref({nhead_q, hdim_v, seqlen_kv});
+    ck_tile::HostTensor<ODataType> o_host_ref({nhead_q, seqlen_q, hdim_v});
+
+    ck_tile::HostTensor<AccDataType> s_host_ref({nhead_q, seqlen_q, seqlen_kv});
+    ck_tile::HostTensor<PDataType> p_host_ref({nhead_q, seqlen_q, seqlen_kv});
+
+    // do computation for each batch
+    for(int b = 0; b < batch_size; ++b)
+    {
+        // copy per-batch data from input tensors
+        q_host_ref.ForEach([&](auto& self, auto i) { self(i) = q_bshd(b, i[0], i[1], i[2]); });
+        k_host_ref.ForEach([&](auto& self, auto i) { self(i) = k_bshd(b, i[0], i[1] / nr, i[2]); });
+        v_host_ref.ForEach([&](auto& self, auto i) { self(i) = v_bshd(b, i[0], i[2], i[1] / nr); });
+
+        ck_tile::reference_batched_gemm<QDataType, KDataType, AccDataType>(
+            q_host_ref, k_host_ref, s_host_ref, q_element_op, k_element_op, s_acc_element_op);
+
+        if(mask.type == mask_enum::no_mask)
+        {
+            ck_tile::reference_batched_masking(s_host_ref, FmhaMasks::NoMask{seqlen_q, seqlen_kv});
+        }
+        else if(mask.type == mask_enum::window_generic)
+        {
+            ck_tile::reference_batched_masking(
+                s_host_ref,
+                ck_tile::make_generic_attention_mask_from_lr_window<FmhaMasks::GenericMask>(
+                    mask.left, mask.right, seqlen_q, seqlen_kv));
+        }
+        else
+        {
+            // if left window size is negative, means causal
+            // else means generic (for current batch)
+            if(mask.left < 0)
+                ck_tile::reference_batched_masking(
+                    s_host_ref,
+                    ck_tile::make_generic_attention_mask_from_lr_window<FmhaMasks::CausalMask>(
+                        mask.left,
+                        mask.right,
+                        seqlen_q,
+                        seqlen_kv,
+                        mask.type == mask_enum::mask_top_left));
+            else
+                ck_tile::reference_batched_masking(
+                    s_host_ref,
+                    ck_tile::make_generic_attention_mask_from_lr_window<FmhaMasks::GenericMask>(
+                        mask.left,
+                        mask.right,
+                        seqlen_q,
+                        seqlen_kv,
+                        mask.type == mask_enum::mask_top_left));
+        }
+
+        ck_tile::reference_batched_softmax<AccDataType, AccDataType>(
+            s_host_ref, p_host_ref, ck_tile::identity{});
+
+        ck_tile::reference_batched_gemm<PDataType, VDataType, AccDataType>(
+            p_host_ref, v_host_ref, o_host_ref, ck_tile::identity{}, v_element_op);
+
+        // copy resulting per-batch data to the output tensor
+        o_host_ref.ForEach(
+            [&](auto& self, auto idx) { o_bshd(b, idx[0], idx[1], idx[2]) = self(idx); });
+    }
+}
+} // namespace host
 
 template <typename DataType>
 bool run_impl(const Problem& problem, const RunConfig& run_config)
@@ -239,7 +345,7 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
 
     // bshd: (batch, seqlen_q, nhead_q, hdim)
     // bhsd: (batch, nhead_q, seqlen_q, hdim)
-    args.q_ptr     = q_buf.GetDeviceBuffer();
+    args.q_ptr = q_buf.GetDeviceBuffer();
     args.stride_q =
         problem.input_layout == TensorLayout::bshd ? problem.nhead_q * problem.hdim : problem.hdim;
     args.nhead_stride_q =
@@ -317,7 +423,32 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
               << ", " << std::setprecision(3) << time << " ms, " << std::setprecision(2) << tflops
               << " TFlops" << std::endl;
 
-    return true;
+    if(!run_config.verify)
+    {
+        return false;
+    }
+
+    /// TODO: Handle different layout correctly
+
+    ck_tile::HostTensor<DataType> o_ref(problem.get_query_shape());
+    /// TODO: Fix computation error in host::fmha_fwd()
+    host::fmha_fwd<float, DataType>(q,
+                                    k,
+                                    v,
+                                    problem.mask,
+                                    o_ref,
+                                    ck_tile::identity{},
+                                    ck_tile::identity{},
+                                    ck_tile::identity{},
+                                    ck_tile::scales<float>(problem.softmax_scale));
+
+    ck_tile::HostTensor<DataType> o(problem.get_query_shape());
+    o_buf.FromDevice(o.data());
+
+    /// TODO: Select torrence based on data type
+    double rtol = 1e-3;
+    double atol = 1e-3;
+    return ck_tile::check_err(o, o_ref, std::string("OUT Error: Incorrect results!"), rtol, atol);
 }
 
 int main(int argc, char* argv[])
