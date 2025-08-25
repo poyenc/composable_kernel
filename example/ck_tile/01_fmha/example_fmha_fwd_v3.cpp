@@ -431,7 +431,7 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
 
     /// TODO: Handle different layout correctly
 
-    ck_tile::HostTensor<DataType> o_ref(problem.get_query_shape());
+    ck_tile::HostTensor<DataType> o_ref(problem.get_output_shape());
     host::fmha_fwd<float, DataType>(q,
                                     k,
                                     v,
@@ -442,7 +442,7 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
                                     ck_tile::identity{},
                                     ck_tile::scales{problem.softmax_scale});
 
-    ck_tile::HostTensor<DataType> o(problem.get_query_shape());
+    ck_tile::HostTensor<DataType> o(problem.get_output_shape());
     o_buf.FromDevice(o.data());
 
     const auto [rtol, atol] = [&] {
