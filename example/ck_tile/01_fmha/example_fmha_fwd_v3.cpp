@@ -258,10 +258,11 @@ CK_TILE_HOST void fmha_fwd(const ck_tile::HostTensor<QDataType>& q_bshd,
     for(int b = 0; b < batch_size; ++b)
     {
         // copy per-batch data from input tensors
-        q_host_ref.ForEach([&](auto& self, auto i) { self(i) = q_bshd(b, i[0], i[1], i[2]); });
-        k_host_ref.ForEach([&](auto& self, auto i) { self(i) = k_bshd(b, i[0], i[1] / nr, i[2]); });
-        v_host_ref.ForEach([&](auto& self, auto i) { self(i) = v_bshd(b, i[0], i[2], i[1] / nr); });
-
+        // clang-format off
+        q_host_ref.ForEach([&](auto& self, auto idx) { self(idx) = q_bshd(b, idx[1], idx[0]     , idx[2]); });
+        k_host_ref.ForEach([&](auto& self, auto idx) { self(idx) = k_bshd(b, idx[1], idx[0] / nr, idx[2]); });
+        v_host_ref.ForEach([&](auto& self, auto idx) { self(idx) = v_bshd(b, idx[2], idx[0] / nr, idx[1]); });
+        // clang-format on
         ck_tile::reference_batched_gemm<QDataType, KDataType, AccDataType>(
             q_host_ref, k_host_ref, s_host_ref, q_element_op, k_element_op, s_acc_element_op);
 
@@ -308,7 +309,7 @@ CK_TILE_HOST void fmha_fwd(const ck_tile::HostTensor<QDataType>& q_bshd,
 
         // copy resulting per-batch data to the output tensor
         o_host_ref.ForEach(
-            [&](auto& self, auto idx) { o_bshd(b, idx[0], idx[1], idx[2]) = self(idx); });
+            [&](auto& self, auto idx) { o_bshd(b, idx[1], idx[0], idx[2]) = self(idx); });
     }
 }
 } // namespace host
