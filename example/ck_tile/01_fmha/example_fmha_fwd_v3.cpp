@@ -322,6 +322,7 @@ bool run_impl(const Problem& problem, const RunConfig& run_config)
     ck_tile::DeviceMem q_buf(q.get_element_space_size_in_bytes());
     ck_tile::DeviceMem k_buf(k.get_element_space_size_in_bytes());
     ck_tile::DeviceMem v_buf(v.get_element_space_size_in_bytes());
+    /// FIXME: use correct size for output tensor. just use q size for now since hidm_qk = hdim_v
     ck_tile::DeviceMem o_buf(q.get_element_space_size_in_bytes());
 
     q_buf.ToDevice(q.data());
