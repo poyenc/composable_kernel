@@ -4,8 +4,8 @@
 #pragma once
 
 #include "ck_tile/core.hpp"
-#include "ck_tile/ops/gemm/block/block_gemm_areg_breg_creg_v2.hpp"
-#include "ck_tile/ops/gemm/block/block_gemm_areg_breg_creg_v2_custom_policy.hpp"
+#include "ck_tile/ops/gemm/block/block_gemm_areg_breg_creg_v3.hpp"
+#include "ck_tile/ops/gemm/block/block_gemm_areg_breg_creg_v3_custom_policy.hpp"
 #include "ck_tile/ops/gemm/block/block_gemm_problem.hpp"
 #include "ck_tile/ops/gemm/pipeline/tile_gemm_shape.hpp"
 
@@ -241,7 +241,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NIterPerWarp = kNPerBlock / (NWarp * WarpGemm::kN);
         constexpr index_t KIterPerWarp = kKPerBlock / WarpGemm::kK;
 
-        /// TODO: find out why the encoding is not same as the BlockGemmARegBRegCRegV2
+        /// TODO: find out why the encoding is not same as the BlockGemmARegBRegCRegV3
         /// implementation
         constexpr auto v_block_outer_dstr_encoding =
             tile_distribution_encoding<sequence<MWarp>,
@@ -299,13 +299,13 @@ struct BlockFmhaV3PipelineDefaultPolicy
         }();
 
         using BlockGemmPolicy =
-            BlockGemmARegBRegCRegV2CustomPolicy<typename Problem::QDataType,
+            BlockGemmARegBRegCRegV3CustomPolicy<typename Problem::QDataType,
                                                 typename Problem::KDataType,
                                                 typename Problem::SaccDataType,
                                                 typename Problem::BlockFmhaShape::Gemm0BlockWarps,
                                                 decltype(warp_gemm)>;
 
-        return BlockGemmARegBRegCRegV2<GemmProblem, BlockGemmPolicy>{};
+        return BlockGemmARegBRegCRegV3<GemmProblem, BlockGemmPolicy>{};
     }
 
     template <typename Problem>
@@ -338,12 +338,12 @@ struct BlockFmhaV3PipelineDefaultPolicy
                                    WGAttrNumAccessEnum::Double>;
 
         using BlockGemmPolicy =
-            BlockGemmARegBRegCRegV2CustomPolicy<typename Problem::PDataType,
+            BlockGemmARegBRegCRegV3CustomPolicy<typename Problem::PDataType,
                                                 typename Problem::VDataType,
                                                 typename Problem::OaccDataType,
                                                 typename Problem::BlockFmhaShape::Gemm1BlockWarps,
                                                 WarpGemm>;
-        return BlockGemmARegBRegCRegV2<GemmProblem, BlockGemmPolicy>{};
+        return BlockGemmARegBRegCRegV3<GemmProblem, BlockGemmPolicy>{};
     }
 
     static constexpr ck_tile::index_t kKLdsPadInBytes = 4 * 4;  // 4 dwords

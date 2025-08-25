@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2018-2024, Advanced Micro Devices, Inc. All rights reserved.
 
 #pragma once
 
@@ -7,29 +7,38 @@
 
 namespace ck_tile {
 
+enum struct GemmLoopOrder
+{
+    KMN,
+    MNK,
+};
+
 template <typename AType_,
           typename BType_,
           typename CType_,
           typename BlockWarps_,
-          typename WarpGemm_>
+          typename WarpGemm_,
+          GemmLoopOrder BlockGemmLoopOrder_ = GemmLoopOrder::KMN>
 struct BlockGemmARegBRegCRegV2CustomPolicy
 {
-    using AType = ck_tile::remove_cvref_t<AType_>;
-    using BType = ck_tile::remove_cvref_t<BType_>;
-    using CType = ck_tile::remove_cvref_t<CType_>;
+    using AType = remove_cvref_t<AType_>;
+    using BType = remove_cvref_t<BType_>;
+    using CType = remove_cvref_t<CType_>;
 
-    using BlockWarps = ck_tile::remove_cvref_t<BlockWarps_>;
+    using BlockWarps = remove_cvref_t<BlockWarps_>;
 
-    static constexpr ck_tile::index_t kMWarps = BlockWarps::at(ck_tile::number<0>{});
-    static constexpr ck_tile::index_t kNWarps = BlockWarps::at(ck_tile::number<1>{});
-    static constexpr ck_tile::index_t kKWarps = BlockWarps::at(ck_tile::number<2>{});
+    static constexpr index_t kMWarps = BlockWarps::at(number<0>{});
+    static constexpr index_t kNWarps = BlockWarps::at(number<1>{});
+    static constexpr index_t kKWarps = BlockWarps::at(number<2>{});
 
-    using WarpGemm = ck_tile::remove_cvref_t<WarpGemm_>;
+    using WarpGemm = remove_cvref_t<WarpGemm_>;
+
+    static constexpr auto BlockGemmLoopOrder = BlockGemmLoopOrder_;
 
     template <typename Problem>
     CK_TILE_HOST_DEVICE static constexpr auto GetWarpGemmMWarpNWarp()
     {
-        return ck_tile::make_tuple(WarpGemm{}, kMWarps, kNWarps);
+        return make_tuple(WarpGemm{}, kMWarps, kNWarps);
     }
 };
 
