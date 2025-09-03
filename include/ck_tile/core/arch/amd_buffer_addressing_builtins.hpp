@@ -2598,20 +2598,19 @@ __device__ auto amd_transpose_load_to_vgpr(const T* in_ptr)
 
     static_assert(__has_builtin(__builtin_amdgcn_raw_buffer_load_b32),
                   "We need to have the compatible compiler version to build this instruction");
+    const auto non_const_ptr = (__attribute__((address_space(3))) T*)const_cast<T*>(in_ptr);
     if constexpr(std::is_same_v<remove_cvref_t<T>, ck_tile::half_t>)
     {
         typedef __attribute__((__vector_size__(4 * sizeof(__fp16)))) __fp16 llvm_fp16x4_t;
         __attribute__((address_space(3))) llvm_fp16x4_t* lds_ptr =
-            reinterpret_cast<__attribute__((address_space(3))) llvm_fp16x4_t*>(
-                reinterpret_cast<uintptr_t>(in_ptr));
+            reinterpret_cast<__attribute__((address_space(3))) llvm_fp16x4_t*>(non_const_ptr);
         return bit_cast<thread_buffer<T, N>>(__builtin_amdgcn_ds_read_tr16_b64_v4f16(lds_ptr));
     }
     else if constexpr(std::is_same_v<remove_cvref_t<T>, ck_tile::bf16_t>)
     {
         typedef __attribute__((__vector_size__(4 * sizeof(__bf16)))) __bf16 llvm_bf16x4_t;
         __attribute__((address_space(3))) llvm_bf16x4_t* lds_ptr =
-            reinterpret_cast<__attribute__((address_space(3))) llvm_bf16x4_t*>(
-                reinterpret_cast<uintptr_t>(in_ptr));
+            reinterpret_cast<__attribute__((address_space(3))) llvm_bf16x4_t*>(non_const_ptr);
         return bit_cast<thread_buffer<T, N>>(__builtin_amdgcn_ds_read_tr16_b64_v4bf16(lds_ptr));
     }
     else if constexpr(std::is_same_v<remove_cvref_t<T>, ck_tile::fp8_t> ||
@@ -2620,8 +2619,7 @@ __device__ auto amd_transpose_load_to_vgpr(const T* in_ptr)
     {
         typedef __attribute__((__vector_size__(2 * sizeof(index_t)))) index_t llvm_i32x2_t;
         __attribute__((address_space(3))) llvm_i32x2_t* lds_ptr =
-            reinterpret_cast<__attribute__((address_space(3))) llvm_i32x2_t*>(
-                reinterpret_cast<uintptr_t>(in_ptr));
+            reinterpret_cast<__attribute__((address_space(3))) llvm_i32x2_t*>(non_const_ptr);
         return bit_cast<thread_buffer<T, N>>(__builtin_amdgcn_ds_read_tr8_b64_v2i32(lds_ptr));
     }
     else
