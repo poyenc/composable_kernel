@@ -734,7 +734,10 @@ struct BlockFmhaFwdV3Pipeline
         constexpr int V_mem_su_ld_insts = v_dram_window.get_num_of_access();
 
         auto K_mem_load = [&](auto k_lds_write_idx) {
-            async_load_tile(k_lds_window_store(k_lds_write_idx), k_dram_window);
+            async_load_tile(k_lds_window_store(k_lds_write_idx),
+                            k_dram_window,
+                            number<-1>{},
+                            bool_constant<false>{});
 
             /// FIXME: use the future-predicting method to move the window
             // move K tile windows
@@ -746,7 +749,10 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto V_mem_load = [&](auto v_lds_write_idx) {
-            async_load_tile(v_lds_window_store(v_lds_write_idx), v_dram_window);
+            async_load_tile(v_lds_window_store(v_lds_write_idx),
+                            v_dram_window,
+                            number<-1>{},
+                            bool_constant<false>{});
 
             /// FIXME: use the future-predicting method to move the window
             move_tile_window(v_dram_window, {kK1, 0});
