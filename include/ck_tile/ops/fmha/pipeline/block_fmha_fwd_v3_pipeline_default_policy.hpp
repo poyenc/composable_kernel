@@ -310,9 +310,8 @@ struct BlockFmhaV3PipelineDefaultPolicy
     static constexpr ck_tile::index_t kKLdsPadInBytes = 4 * 4;  // 4 dwords
     static constexpr ck_tile::index_t kVLdsPadInBytes = 4 * 16; // 16 dwords
 
-    template <typename Problem, ck_tile::index_t IBuf = 0>
-    CK_TILE_DEVICE static constexpr auto
-    MakeKLdsStoreBlockDescriptor(ck_tile::number<IBuf> = ck_tile::number<0>{})
+    template <typename Problem>
+    CK_TILE_DEVICE static constexpr auto MakeKLdsStoreBlockDescriptor()
     {
         using namespace ck_tile;
 
@@ -339,31 +338,29 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NumIssues = kNPerBlock / (LaneGroups * NumWarps);
         static_assert(NumIssues == kNPerBlock * kKPerBlock / (kBlockSize * KVector));
 
-        constexpr auto k_lds_block_desc_0 = make_naive_tensor_descriptor_with_offset(
-            make_tuple(number<NumIssues>{},  // n0
-                       number<LaneGroups>{}, // n1
-                       number<NumWarps>{},   // n2
-                       number<LanesPerK>{},  // k0
-                       number<KVector>{}),   // k1
-            make_tuple(number<NumWarps*(WarpSize * KVector + kPad)>{},
-                       number<kKPerBlock>{},
-                       number<WarpSize * KVector + kPad>{},
-                       number<KVector>{},
-                       number<1>{}),
-            number<IBuf * GetSingleSmemElementSpaceSize<Problem>()>{},
-            number<KVector>{},
-            number<1>{});
+        constexpr auto k_lds_block_desc_0 =
+            make_naive_tensor_descriptor(make_tuple(number<NumIssues>{},  // n0
+                                                    number<LaneGroups>{}, // n1
+                                                    number<NumWarps>{},   // n2
+                                                    number<LanesPerK>{},  // k0
+                                                    number<KVector>{}),   // k1
+                                         make_tuple(number<NumWarps*(WarpSize * KVector + kPad)>{},
+                                                    number<kKPerBlock>{},
+                                                    number<WarpSize * KVector + kPad>{},
+                                                    number<KVector>{},
+                                                    number<1>{}),
+                                         number<KVector>{},
+                                         number<1>{});
 
         // TODO this layout is hard coded, and will be used in async copy buffer view load
         // in LDS the real layout is (bufs, N0, N2, N1*K0*K1)
         constexpr auto k_lds_block_desc_issues_warps_lanes = transform_tensor_descriptor(
             k_lds_block_desc_0,
-            make_tuple(make_pass_through_transform(number<NumIssues>{}),
-                       make_pass_through_transform(number<NumWarps>{}),
-                       make_merge_transform(make_tuple(
-                           number<LaneGroups>{}, number<LanesPerK>{}, number<KVector>{}))),
-            make_tuple(sequence<0>{}, sequence<2>{}, sequence<1, 3, 4>{}),
-            make_tuple(sequence<0>{}, sequence<1>{}, sequence<2>{}));
+            make_tuple(make_merge_transform(make_tuple(
+                           number<NumIssues>{}, number<LaneGroups>{}, number<NumWarps>{})),
+                       make_merge_transform(make_tuple(number<LanesPerK>{}, number<KVector>{}))),
+            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
+            make_tuple(sequence<0>{}, sequence<1>{}));
 
         return k_lds_block_desc_issues_warps_lanes;
     }
@@ -458,9 +455,8 @@ struct BlockFmhaV3PipelineDefaultPolicy
         return max(SingleKSize, SingleVSize);
     }
 
-    template <typename Problem, ck_tile::index_t IBuf = 0>
-    CK_TILE_DEVICE static constexpr auto
-    MakeVLdsStoreBlockDescriptor(ck_tile::number<IBuf> = ck_tile::number<0>{})
+    template <typename Problem>
+    CK_TILE_DEVICE static constexpr auto MakeVLdsStoreBlockDescriptor()
     {
         using namespace ck_tile;
 
@@ -487,31 +483,29 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NumIssues = kNPerBlock / (LaneGroups * NumWarps);
         static_assert(NumIssues == kNPerBlock * kKPerBlock / (kBlockSize * KVector));
 
-        constexpr auto v_lds_block_desc_0 = make_naive_tensor_descriptor_with_offset(
-            make_tuple(number<NumIssues>{},  // n0
-                       number<LaneGroups>{}, // n1
-                       number<NumWarps>{},   // n2
-                       number<LanesPerK>{},  // k0
-                       number<KVector>{}),   // k1
-            make_tuple(number<NumWarps*(WarpSize * KVector + kPad)>{},
-                       number<kKPerBlock>{},
-                       number<WarpSize * KVector + kPad>{},
-                       number<KVector>{},
-                       number<1>{}),
-            number<(IBuf + 2) * GetSingleSmemElementSpaceSize<Problem>()>{},
-            number<KVector>{},
-            number<1>{});
+        constexpr auto v_lds_block_desc_0 =
+            make_naive_tensor_descriptor(make_tuple(number<NumIssues>{},  // n0
+                                                    number<LaneGroups>{}, // n1
+                                                    number<NumWarps>{},   // n2
+                                                    number<LanesPerK>{},  // k0
+                                                    number<KVector>{}),   // k1
+                                         make_tuple(number<NumWarps*(WarpSize * KVector + kPad)>{},
+                                                    number<kKPerBlock>{},
+                                                    number<WarpSize * KVector + kPad>{},
+                                                    number<KVector>{},
+                                                    number<1>{}),
+                                         number<KVector>{},
+                                         number<1>{});
 
         // TODO this layout is hard coded, and will be used in async copy buffer view load
         // in LDS the real layout is (bufs, N0, N2, N1*K0*K1)
         constexpr auto v_lds_block_desc_issues_warps_lanes = transform_tensor_descriptor(
             v_lds_block_desc_0,
-            make_tuple(make_pass_through_transform(number<NumIssues>{}),
-                       make_pass_through_transform(number<NumWarps>{}),
-                       make_merge_transform(make_tuple(
-                           number<LaneGroups>{}, number<LanesPerK>{}, number<KVector>{}))),
-            make_tuple(sequence<0>{}, sequence<2>{}, sequence<1, 3, 4>{}),
-            make_tuple(sequence<0>{}, sequence<1>{}, sequence<2>{}));
+            make_tuple(make_merge_transform(make_tuple(
+                           number<NumIssues>{}, number<LaneGroups>{}, number<NumWarps>{})),
+                       make_merge_transform(make_tuple(number<LanesPerK>{}, number<KVector>{}))),
+            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
+            make_tuple(sequence<0>{}, sequence<1>{}));
 
         return v_lds_block_desc_issues_warps_lanes;
     }
