@@ -527,14 +527,15 @@ struct FmhaFwdV3Kernel
                 return FmhaMask{kargs.seqlen_q, kargs.seqlen_k};
         }();
 
+        // Notice: When using double buffering, make sure both buffers are in the same array.
+        // This prevents the compiler from using separate VGPRs to store the base address
+        // and enables the use of immediate offsets in load/store instructions.
         __shared__ char
-            smem_k0[FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
+            smem_k[2]
+                  [FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
         __shared__ char
-            smem_k1[FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
-        __shared__ char
-            smem_v0[FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
-        __shared__ char
-            smem_v1[FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
+            smem_v[2]
+                  [FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
         __shared__ char smem[1];
 
         auto o_acc_tile = [&]() {
@@ -544,10 +545,10 @@ struct FmhaFwdV3Kernel
                                   lse_dram_window,
                                   mask,
                                   kargs.scale_s,
-                                  reinterpret_cast<KDataType*>(smem_k0),
-                                  reinterpret_cast<KDataType*>(smem_k1),
-                                  reinterpret_cast<VDataType*>(smem_v0),
-                                  reinterpret_cast<VDataType*>(smem_v1),
+                                  reinterpret_cast<KDataType*>(smem_k[0]),
+                                  reinterpret_cast<KDataType*>(smem_k[1]),
+                                  reinterpret_cast<VDataType*>(smem_v[0]),
+                                  reinterpret_cast<VDataType*>(smem_v[1]),
                                   smem);
         }();
 
