@@ -1135,7 +1135,14 @@ struct BlockFmhaFwdV3Pipeline
 
             s_waitcnt_vmcnt<0>();
             __builtin_amdgcn_s_barrier();
-
+#if 0
+            DEBUG_STMTS {
+            print_lds(k_lds_window_store(number<0>{}), "K");
+            }
+            DEBUG_STMTS {
+            print_lds(k_lds_window_load(number<0>{}), "K");
+            }
+#endif
             K_lds_load(number<0>{}); // lds_K0
 
             s_waitcnt_lgkmcnt<0>();

@@ -12,6 +12,59 @@
 
 namespace ck_tile {
 
+template <typename T>
+constexpr T swap_bit_positions(T x, unsigned p, unsigned q)
+{
+    static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+
+    T bitp = (x >> p) & T(1);
+    T bitq = (x >> q) & T(1);
+
+    T mask = ((T(1) << p) | (T(1) << q));
+    x &= ~mask;
+
+    x |= (bitp << q) | (bitq << p);
+    return x;
+}
+
+template <typename T>
+constexpr T swap_bit1_bit2(T x)
+{
+    return swap_bit_positions<T>(x, 1u, 2u);
+}
+
+template <typename T>
+constexpr T permute_bits_5(T x)
+{
+    static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+
+    T b0 = (x >> 0) & 1u;
+    T b1 = (x >> 1) & 1u;
+    T b2 = (x >> 2) & 1u;
+    T b3 = (x >> 3) & 1u;
+    T b4 = (x >> 4) & 1u;
+
+    T y = (b2 << 4) | (b1 << 3) | (b0 << 2) | (b4 << 1) | b3;
+
+    return (x & ~T(31)) | y;
+}
+
+template <typename T>
+constexpr T inverse_permute_bits_5(T x)
+{
+    static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+
+    T y  = x & 31u;
+    T c4 = (y >> 4) & 1u;
+    T c3 = (y >> 3) & 1u;
+    T c2 = (y >> 2) & 1u;
+    T c1 = (y >> 1) & 1u;
+    T c0 = (y >> 0) & 1u;
+
+    T orig = (c1 << 4) | (c0 << 3) | (c4 << 2) | (c3 << 1) | c2;
+    return (x & ~T(31)) | orig;
+}
+
 template <typename FmhaPipeline_, typename EpiloguePipeline_>
 struct FmhaFwdV3Kernel
 {
@@ -454,8 +507,29 @@ struct FmhaFwdV3Kernel
                 number<FmhaPipeline::kAlignmentK>{},
                 number<1>{});
 
+            auto k_dram_transformed =
+                transform_tensor_view(k_dram_naive,
+                                      make_tuple(make_functor_transform(
+                                                     [](auto idx) {
+#if 1
+                                                         return bit_cast<index_t>(swap_bit1_bit2(
+                                                             bit_cast<uint32_t>(idx)));
+#else
+#if 1
+                                                         return bit_cast<index_t>(permute_bits_5(
+                                                             bit_cast<uint32_t>(idx)));
+#else
+                                                         return idx;
+#endif
+#endif
+                                                     },
+                                                     kargs.seqlen_k),
+                                                 make_pass_through_transform(kargs.hdim_q)),
+                                      make_tuple(sequence<0>{}, sequence<1>{}),
+                                      make_tuple(sequence<0>{}, sequence<1>{}));
+
             return pad_tensor_view(
-                k_dram_naive,
+                k_dram_transformed,
                 make_tuple(number<FmhaPipeline::kN0>{}, number<FmhaPipeline::kK0>{}),
                 sequence<kPadSeqLenK, kPadHeadDimQ>{});
         }();
@@ -467,8 +541,29 @@ struct FmhaFwdV3Kernel
                 number<FmhaPipeline::kAlignmentV>{},
                 number<1>{});
 
+            auto v_dram_transformed =
+                transform_tensor_view(v_dram_naive,
+                                      make_tuple(make_functor_transform(
+                                                     [](auto idx) {
+#if 1
+                                                         return bit_cast<index_t>(swap_bit1_bit2(
+                                                             bit_cast<uint32_t>(idx)));
+#else
+#if 1
+                                                         return bit_cast<index_t>(permute_bits_5(
+                                                             bit_cast<uint32_t>(idx)));
+#else
+                                                         return idx;
+#endif
+#endif
+                                                     },
+                                                     kargs.seqlen_k),
+                                                 make_pass_through_transform(kargs.hdim_v)),
+                                      make_tuple(sequence<0>{}, sequence<1>{}),
+                                      make_tuple(sequence<0>{}, sequence<1>{}));
+
             return pad_tensor_view(
-                v_dram_naive,
+                v_dram_transformed,
                 make_tuple(number<FmhaPipeline::kK1>{}, number<FmhaPipeline::kN1>{}),
                 sequence<kPadSeqLenK, kPadHeadDimV>{});
         }();
@@ -532,10 +627,10 @@ struct FmhaFwdV3Kernel
         // and enables the use of immediate offsets in load/store instructions.
         __shared__ char
             smem_k[2]
-                  [FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
+                  [FmhaPipeline::Policy::template GetSmemSizeK<typename FmhaPipeline::Problem>()];
         __shared__ char
             smem_v[2]
-                  [FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
+                  [FmhaPipeline::Policy::template GetSmemSizeV<typename FmhaPipeline::Problem>()];
         __shared__ char smem[1];
 
         auto o_acc_tile = [&]() {
