@@ -307,14 +307,6 @@ struct BlockFmhaFwdV3Pipeline
         }
     }();
 
-    CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
-    {
-        // create another LDS buffer for p
-        return ck_tile::max(kM0 * kN1 * sizeof(PDataType),
-                            Policy::template GetSmemSize<Problem>() +
-                                kM0 * kN0 * sizeof(PDataType));
-    }
-
     // for debug only
     template <ck_tile::index_t MPerBlock, ck_tile::index_t NPerBlock>
     CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc()
@@ -419,7 +411,6 @@ struct BlockFmhaFwdV3Pipeline
                           kN1 == VDramBlockWindowTmp{}.get_window_lengths()[number<1>{}],
                       "wrong!");
 
-        static_assert(sizeof(SaccDataType) * kM0 * kN0 <= GetSmemSize());
         auto s_lds = make_tensor_view<address_space_enum::lds>(
             static_cast<SaccDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN0>());
         [[maybe_unused]] auto s_lds_window =

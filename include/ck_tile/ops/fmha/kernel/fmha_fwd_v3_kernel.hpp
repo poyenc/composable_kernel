@@ -532,10 +532,10 @@ struct FmhaFwdV3Kernel
         // and enables the use of immediate offsets in load/store instructions.
         __shared__ char
             smem_k[2]
-                  [FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
+                  [FmhaPipeline::Policy::template GetSmemSizeK<typename FmhaPipeline::Problem>()];
         __shared__ char
             smem_v[2]
-                  [FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>()];
+                  [FmhaPipeline::Policy::template GetSmemSizeV<typename FmhaPipeline::Problem>()];
         __shared__ char smem[1];
 
         auto o_acc_tile = [&]() {

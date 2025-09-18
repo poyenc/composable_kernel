@@ -561,36 +561,25 @@ struct BlockFmhaV3PipelineDefaultPolicy
     }
 
     template <typename Problem>
-    CK_TILE_DEVICE static constexpr ck_tile::index_t GetSmemSizeKV()
+    CK_TILE_DEVICE static constexpr ck_tile::index_t GetSmemSizeK()
     {
-        using namespace ck_tile;
-
         static_assert(MakeKLdsLoadBlockDescriptor<Problem>().get_element_space_size() ==
                       MakeKLdsStoreBlockDescriptor<Problem>().get_element_space_size());
-        constexpr index_t k_element_space_size =
-            MakeKLdsLoadBlockDescriptor<Problem>().get_element_space_size();
 
-        static_assert(MakeVLdsLoadBlockDescriptor<Problem>().get_element_space_size() ==
-                      MakeVLdsStoreBlockDescriptor<Problem>().get_element_space_size());
-        constexpr index_t v_element_space_size =
-            MakeVLdsLoadBlockDescriptor<Problem>().get_element_space_size();
-
-        static_assert(ck_tile::max(k_element_space_size, v_element_space_size) <=
-                      GetSingleSmemElementSpaceSize<Problem>());
-
-        /// TODO: override GetSingleSmemElementSpaceSize() to align with MakeKLdsBlockDescriptor() &
-        /// MakeVLdsBlockDescriptor()
-        static_assert(std::is_same_v<typename Problem::KDataType, typename Problem::VDataType>);
-        constexpr index_t kv_element_space_size_in_bytes =
-            GetSingleSmemElementSpaceSize<Problem>() * sizeof(typename Problem::KDataType);
-
-        return kv_element_space_size_in_bytes;
+        return MakeKLdsLoadBlockDescriptor<Problem>().get_element_space_size() *
+                   sizeof(typename Problem::KDataType) +
+               kKLdsPadInBytes;
     }
 
     template <typename Problem>
-    CK_TILE_DEVICE static constexpr ck_tile::index_t GetSmemSize()
+    CK_TILE_DEVICE static constexpr ck_tile::index_t GetSmemSizeV()
     {
-        return 4 * GetSmemSizeKV<Problem>();
+        static_assert(MakeVLdsLoadBlockDescriptor<Problem>().get_element_space_size() ==
+                      MakeVLdsStoreBlockDescriptor<Problem>().get_element_space_size());
+
+        return MakeVLdsLoadBlockDescriptor<Problem>().get_element_space_size() *
+                   sizeof(typename Problem::VDataType) +
+               kVLdsPadInBytes;
     }
 };
 
