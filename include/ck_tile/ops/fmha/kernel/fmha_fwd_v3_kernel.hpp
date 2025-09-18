@@ -32,9 +32,17 @@ constexpr T swap_bit_positions(T x, unsigned p, unsigned q)
 }
 
 template <typename T>
-constexpr T swap_bit1_bit2(T x)
+constexpr T swap_bit12(T x)
 {
     return swap_bit_positions<T>(x, 1u, 2u);
+}
+
+template <typename T>
+constexpr T swap_bit12_bit34(T x)
+{
+    x = swap_bit_positions<T>(x, 1u, 2u);
+    x = swap_bit_positions<T>(x, 3u, 4u);
+    return x;
 }
 
 template <typename T>
@@ -575,21 +583,28 @@ struct FmhaFwdV3Kernel
                 number<FmhaPipeline::kAlignmentK>{},
                 number<1>{});
 
-            auto k_dram_transformed =
-                transform_tensor_view(k_dram_naive,
-                                      make_tuple(make_functor_transform(
-                                                     [](auto idx) {
+            auto k_dram_transformed = transform_tensor_view(
+                k_dram_naive,
+                make_tuple(
+                    make_functor_transform(
+                        [](auto idx) {
 #if CK_TILE_REMAP_TOKEN_USING_DESC
-                                                         return bit_cast<index_t>(permute_bits_5(
-                                                             bit_cast<uint32_t>(idx)));
+                            if constexpr(FmhaPipeline::kN0 == 32)
+                            {
+                                return bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(idx)));
+                            }
+                            else
+                            {
+                                return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                            }
 #else
-                                                         return idx;
+                            return idx;
 #endif
-                                                     },
-                                                     kargs.seqlen_k - thread_key_token_offset),
-                                                 make_pass_through_transform(kargs.hdim_q)),
-                                      make_tuple(sequence<0>{}, sequence<1>{}),
-                                      make_tuple(sequence<0>{}, sequence<1>{}));
+                        },
+                        kargs.seqlen_k - thread_key_token_offset),
+                    make_pass_through_transform(kargs.hdim_q)),
+                make_tuple(sequence<0>{}, sequence<1>{}),
+                make_tuple(sequence<0>{}, sequence<1>{}));
 
             return pad_tensor_view(
                 k_dram_transformed,
@@ -604,21 +619,28 @@ struct FmhaFwdV3Kernel
                 number<FmhaPipeline::kAlignmentV>{},
                 number<1>{});
 
-            auto v_dram_transformed =
-                transform_tensor_view(v_dram_naive,
-                                      make_tuple(make_functor_transform(
-                                                     [](auto idx) {
+            auto v_dram_transformed = transform_tensor_view(
+                v_dram_naive,
+                make_tuple(
+                    make_functor_transform(
+                        [](auto idx) {
 #if CK_TILE_REMAP_TOKEN_USING_DESC
-                                                         return bit_cast<index_t>(permute_bits_5(
-                                                             bit_cast<uint32_t>(idx)));
+                            if constexpr(FmhaPipeline::kK1 == 32)
+                            {
+                                return bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(idx)));
+                            }
+                            else
+                            {
+                                return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                            }
 #else
-                                                         return idx;
+                            return idx;
 #endif
-                                                     },
-                                                     kargs.seqlen_k - thread_value_token_offset),
-                                                 make_pass_through_transform(kargs.hdim_v)),
-                                      make_tuple(sequence<0>{}, sequence<1>{}),
-                                      make_tuple(sequence<0>{}, sequence<1>{}));
+                        },
+                        kargs.seqlen_k - thread_value_token_offset),
+                    make_pass_through_transform(kargs.hdim_v)),
+                make_tuple(sequence<0>{}, sequence<1>{}),
+                make_tuple(sequence<0>{}, sequence<1>{}));
 
             return pad_tensor_view(
                 v_dram_transformed,

@@ -385,8 +385,15 @@ struct BlockFmhaV3PipelineDefaultPolicy
             desc,
             make_tuple(make_functor_transform(
                            [](auto idx) {
-                               return bit_cast<index_t>(
-                                   inverse_permute_bits_5(bit_cast<uint32_t>(idx)));
+                               if constexpr(Problem::BlockFmhaShape::kN0 == 32)
+                               {
+                                   return bit_cast<index_t>(
+                                       inverse_permute_bits_5(bit_cast<uint32_t>(idx)));
+                               }
+                               else
+                               {
+                                   return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                               }
                            },
                            number<kNPerBlock>{}),
                        make_pass_through_transform(number<kKPerBlock>{})),
@@ -525,8 +532,15 @@ struct BlockFmhaV3PipelineDefaultPolicy
             desc,
             make_tuple(make_functor_transform(
                            [](auto idx) {
-                               return bit_cast<index_t>(
-                                   inverse_permute_bits_5(bit_cast<uint32_t>(idx)));
+                               if constexpr(Problem::BlockFmhaShape::kK1 == 32)
+                               {
+                                   return bit_cast<index_t>(
+                                       inverse_permute_bits_5(bit_cast<uint32_t>(idx)));
+                               }
+                               else
+                               {
+                                   return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                               }
                            },
                            number<kKPerBlock>{}),
                        make_pass_through_transform(number<kNPerBlock>{})),
