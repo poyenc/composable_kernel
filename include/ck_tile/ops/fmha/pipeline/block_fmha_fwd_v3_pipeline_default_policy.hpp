@@ -310,25 +310,30 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t KThreadPerWarp = kKPerBlock / kKPack;
         constexpr index_t NThreadPerWarp = get_warp_size() / KThreadPerWarp;
         constexpr index_t NumElemsInPad  = kKLdsPadInBytes / sizeof(typename Problem::KDataType);
+        constexpr index_t NumIssues      = kNPerBlock / (NThreadPerWarp * NumWarps);
 
         constexpr auto k_lds_block_desc_0 = make_naive_tensor_descriptor(
-            make_tuple(number<NumWarps>{},
+            make_tuple(number<NumIssues>{},
+                       number<NumWarps>{},
                        number<NThreadPerWarp>{},
                        number<KThreadPerWarp>{},
                        number<kKPack>{}),
-            make_tuple(number<NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad>{},
-                       number<KThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                       number<kKPack>{},                  // KThreadPerWarp
-                       number<1>{}),                      // kKPack
-            number<8>{},
+            make_tuple(
+                number<NumWarps*(NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad)>{},
+                number<NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad>{},
+                number<KThreadPerWarp * kKPack>{}, // NThreadPerWarp
+                number<kKPack>{},                  // KThreadPerWarp
+                number<1>{}),                      // kKPack
+            number<kKPack>{},
             number<1>{});
 
         constexpr auto k_lds_block_desc = transform_tensor_descriptor(
             k_lds_block_desc_0,
             make_tuple(
-                make_merge_transform(make_tuple(number<NumWarps>{}, number<NThreadPerWarp>{})),
+                make_merge_transform(
+                    make_tuple(number<NumIssues>{}, number<NumWarps>{}, number<NThreadPerWarp>{})),
                 make_merge_transform(make_tuple(number<KThreadPerWarp>{}, number<kKPack>{}))),
-            make_tuple(sequence<0, 1>{}, sequence<2, 3>{}),
+            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return k_lds_block_desc;
@@ -346,29 +351,34 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t KThreadPerWarp = kKPerBlock / kKPack;
         constexpr index_t NThreadPerWarp = get_warp_size() / KThreadPerWarp;
         constexpr index_t NumElemsInPad  = kKLdsPadInBytes / sizeof(typename Problem::KDataType);
+        constexpr index_t NumIssues      = kNPerBlock / (NThreadPerWarp * NumWarps);
 
         static_assert(NumWarps == 8);
         static_assert(NThreadPerWarp == 4);
         static_assert(NThreadPerWarp * KThreadPerWarp == 64);
 
         constexpr auto k_lds_block_desc_0 = make_naive_tensor_descriptor(
-            make_tuple(number<NumWarps>{},
+            make_tuple(number<NumIssues>{},
+                       number<NumWarps>{},
                        number<NThreadPerWarp>{},
                        number<KThreadPerWarp>{},
                        number<kKPack>{}),
-            make_tuple(number<NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad>{},
-                       number<KThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                       number<kKPack>{},                  // KThreadPerWarp
-                       number<1>{}),                      // kKPack
+            make_tuple(
+                number<NumWarps*(NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad)>{},
+                number<NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad>{},
+                number<KThreadPerWarp * kKPack>{}, // NThreadPerWarp
+                number<kKPack>{},                  // KThreadPerWarp
+                number<1>{}),                      // kKPack
             number<kKPack>{},
             number<1>{});
 
         auto desc = transform_tensor_descriptor(
             k_lds_block_desc_0,
             make_tuple(
-                make_merge_transform(make_tuple(number<NumWarps>{}, number<NThreadPerWarp>{})),
+                make_merge_transform(
+                    make_tuple(number<NumIssues>{}, number<NumWarps>{}, number<NThreadPerWarp>{})),
                 make_merge_transform(make_tuple(number<KThreadPerWarp>{}, number<kKPack>{}))),
-            make_tuple(sequence<0, 1>{}, sequence<2, 3>{}),
+            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return transform_tensor_descriptor(
@@ -436,29 +446,34 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NThreadPerWarp = kNPerBlock / kKPack;
         constexpr index_t KThreadPerWarp = get_warp_size() / NThreadPerWarp;
         constexpr index_t NumElemsInPad  = kVLdsPadInBytes / sizeof(typename Problem::VDataType);
+        constexpr index_t NumIssues      = kKPerBlock / (KThreadPerWarp * NumWarps);
 
         static_assert(NumWarps == 8);
         static_assert(KThreadPerWarp == 4);
         static_assert(NThreadPerWarp * KThreadPerWarp == 64);
 
         constexpr auto v_lds_block_desc_0 = make_naive_tensor_descriptor(
-            make_tuple(number<NumWarps>{},
+            make_tuple(number<NumIssues>{},
+                       number<NumWarps>{},
                        number<KThreadPerWarp>{},
                        number<NThreadPerWarp>{},
                        number<kKPack>{}),
-            make_tuple(number<KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad>{},
-                       number<NThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                       number<kKPack>{},                  // KThreadPerWarp
-                       number<1>{}),                      // kKPack
+            make_tuple(
+                number<NumWarps*(KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad)>{},
+                number<KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad>{},
+                number<NThreadPerWarp * kKPack>{}, // NThreadPerWarp
+                number<kKPack>{},                  // KThreadPerWarp
+                number<1>{}),                      // kKPack
             number<kKPack>{},
             number<1>{});
 
         auto v_lds_block_desc = transform_tensor_descriptor(
             v_lds_block_desc_0,
             make_tuple(
-                make_merge_transform(make_tuple(number<NumWarps>{}, number<KThreadPerWarp>{})),
+                make_merge_transform(
+                    make_tuple(number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
                 make_merge_transform(make_tuple(number<NThreadPerWarp>{}, number<kKPack>{}))),
-            make_tuple(sequence<0, 1>{}, sequence<2, 3>{}),
+            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return v_lds_block_desc;
@@ -476,29 +491,34 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NThreadPerWarp = kNPerBlock / kKPack;
         constexpr index_t KThreadPerWarp = get_warp_size() / NThreadPerWarp;
         constexpr index_t NumElemsInPad  = kVLdsPadInBytes / sizeof(typename Problem::VDataType);
+        constexpr index_t NumIssues      = kKPerBlock / (KThreadPerWarp * NumWarps);
 
         static_assert(NumWarps == 8);
         static_assert(KThreadPerWarp == 4);
         static_assert(NThreadPerWarp * KThreadPerWarp == 64);
 
         constexpr auto v_lds_block_desc_0 = make_naive_tensor_descriptor(
-            make_tuple(number<NumWarps>{},
+            make_tuple(number<NumIssues>{},
+                       number<NumWarps>{},
                        number<KThreadPerWarp>{},
                        number<NThreadPerWarp>{},
                        number<kKPack>{}),
-            make_tuple(number<KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad>{},
-                       number<NThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                       number<kKPack>{},                  // KThreadPerWarp
-                       number<1>{}),                      // kKPack
+            make_tuple(
+                number<NumWarps*(KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad)>{},
+                number<KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad>{},
+                number<NThreadPerWarp * kKPack>{}, // NThreadPerWarp
+                number<kKPack>{},                  // KThreadPerWarp
+                number<1>{}),                      // kKPack
             number<kKPack>{},
             number<1>{});
 
         auto desc = transform_tensor_descriptor(
             v_lds_block_desc_0,
             make_tuple(
-                make_merge_transform(make_tuple(number<NumWarps>{}, number<KThreadPerWarp>{})),
+                make_merge_transform(
+                    make_tuple(number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
                 make_merge_transform(make_tuple(number<NThreadPerWarp>{}, number<kKPack>{}))),
-            make_tuple(sequence<0, 1>{}, sequence<2, 3>{}),
+            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return transform_tensor_descriptor(

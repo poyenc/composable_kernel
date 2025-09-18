@@ -478,7 +478,19 @@ struct FmhaFwdV3Kernel
         {
             constexpr index_t kVectorSize =
                 FmhaPipeline::Policy::template GetAlignmentK<typename FmhaPipeline::Problem>();
-            static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize == kVectorSize);
+            if constexpr(FmhaPipeline::kN0 == 32)
+            {
+                static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize == kVectorSize);
+            }
+            else if constexpr(FmhaPipeline::kN0 == 64)
+            {
+                static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize ==
+                              2 * kVectorSize);
+            }
+            else
+            {
+                static_assert(false, "unsupported kN0");
+            }
 
             constexpr index_t KThreadPerBlock = FmhaPipeline::kK0 / kVectorSize;
 
@@ -498,8 +510,19 @@ struct FmhaFwdV3Kernel
         {
             constexpr index_t kVectorSize =
                 FmhaPipeline::Policy::template GetAlignmentV<typename FmhaPipeline::Problem>();
-            static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize == kVectorSize);
-
+            if constexpr(FmhaPipeline::kK1 == 32)
+            {
+                static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize == kVectorSize);
+            }
+            else if constexpr(FmhaPipeline::kK1 == 64)
+            {
+                static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize ==
+                              2 * kVectorSize);
+            }
+            else
+            {
+                static_assert(false, "unsupported kK1");
+            }
             constexpr index_t NThreadPerBlock = FmhaPipeline::kN1 / kVectorSize;
 
             // Make sure that a thread must read data from the same value token
