@@ -582,31 +582,8 @@ struct FmhaFwdV3Kernel
                 number<FmhaPipeline::kAlignmentK>{},
                 number<1>{});
 
-            auto k_dram_transformed = transform_tensor_view(
-                k_dram_naive,
-                make_tuple(make_functor_transform(
-                               [](auto idx) {
-#if CK_TILE_REMAP_TOKEN_USING_DESC
-                                   if constexpr(FmhaPipeline::kN0 == 32)
-                                   {
-                                       return bit_cast<index_t>(
-                                           permute_bits_5(bit_cast<uint32_t>(idx)));
-                                   }
-                                   else
-                                   {
-                                       return idx;
-                                   }
-#else
-                                   return idx;
-#endif
-                               },
-                               kargs.seqlen_k - thread_key_token_offset),
-                           make_pass_through_transform(kargs.hdim_q)),
-                make_tuple(sequence<0>{}, sequence<1>{}),
-                make_tuple(sequence<0>{}, sequence<1>{}));
-
             return pad_tensor_view(
-                k_dram_transformed,
+                k_dram_naive,
                 make_tuple(number<FmhaPipeline::kN0>{}, number<FmhaPipeline::kK0>{}),
                 sequence<kPadSeqLenK, kPadHeadDimQ>{});
         }();
@@ -618,31 +595,8 @@ struct FmhaFwdV3Kernel
                 number<FmhaPipeline::kAlignmentV>{},
                 number<1>{});
 
-            auto v_dram_transformed = transform_tensor_view(
-                v_dram_naive,
-                make_tuple(make_functor_transform(
-                               [](auto idx) {
-#if CK_TILE_REMAP_TOKEN_USING_DESC
-                                   if constexpr(FmhaPipeline::kK1 == 32)
-                                   {
-                                       return bit_cast<index_t>(
-                                           permute_bits_5(bit_cast<uint32_t>(idx)));
-                                   }
-                                   else
-                                   {
-                                       return idx;
-                                   }
-#else
-                                   return idx;
-#endif
-                               },
-                               kargs.seqlen_k - thread_value_token_offset),
-                           make_pass_through_transform(kargs.hdim_v)),
-                make_tuple(sequence<0>{}, sequence<1>{}),
-                make_tuple(sequence<0>{}, sequence<1>{}));
-
             return pad_tensor_view(
-                v_dram_transformed,
+                v_dram_naive,
                 make_tuple(number<FmhaPipeline::kK1>{}, number<FmhaPipeline::kN1>{}),
                 sequence<kPadSeqLenK, kPadHeadDimV>{});
         }();
