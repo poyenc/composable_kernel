@@ -499,7 +499,7 @@ struct FmhaFwdV3Kernel
             {
                 static_assert(false, "unsupported kN0");
             }
-
+#if !CK_TILE_REMAP_TOKEN_USING_DESC
             constexpr index_t KThreadPerBlock = FmhaPipeline::kK0 / kVectorSize;
 
             // Make sure that a thread must read data from the same key token
@@ -508,7 +508,6 @@ struct FmhaFwdV3Kernel
             index_t new_key_offset =
                 bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(old_key_offset)));
 
-#if !CK_TILE_REMAP_TOKEN_USING_DESC
             thread_key_token_offset = new_key_offset - old_key_offset;
             batch_offset_k += thread_key_token_offset * kargs.stride_k;
 #endif
@@ -531,6 +530,7 @@ struct FmhaFwdV3Kernel
             {
                 static_assert(false, "unsupported kK1");
             }
+#if !CK_TILE_REMAP_TOKEN_USING_DESC
             constexpr index_t NThreadPerBlock = FmhaPipeline::kN1 / kVectorSize;
 
             // Make sure that a thread must read data from the same value token
@@ -539,7 +539,6 @@ struct FmhaFwdV3Kernel
             index_t new_value_offset =
                 bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(old_value_offset)));
 
-#if !CK_TILE_REMAP_TOKEN_USING_DESC
             thread_value_token_offset = new_value_offset - old_value_offset;
             batch_offset_v += thread_value_token_offset * kargs.stride_k;
 #endif

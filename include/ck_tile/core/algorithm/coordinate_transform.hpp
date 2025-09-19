@@ -1585,15 +1585,13 @@ struct functor_transform : public base_transform<1, 1>
 
     template <typename LowIdxDiff, typename UpIdxDiff, typename LowIdx, typename UpIdx>
     CK_TILE_HOST_DEVICE void update_lower_index(LowIdxDiff& idx_diff_low,
-                                                const UpIdxDiff& idx_diff_up,
+                                                const UpIdxDiff&,
                                                 LowIdx& idx_low,
                                                 const UpIdx& up_idx) const
     {
         static_assert(LowIdxDiff::size() == 1 && UpIdxDiff::size() == 1 && LowIdx::size() == 1 &&
                           UpIdx::size() == 1,
                       "wrong! inconsistent # of dimension");
-
-        constexpr auto I0 = number<0>{};
 
         const auto idx_low_old = idx_low;
         calculate_lower_index(idx_low, up_idx);
