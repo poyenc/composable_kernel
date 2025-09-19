@@ -392,7 +392,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
                                }
                                else
                                {
-                                   return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                                   return idx;
                                }
                            },
                            number<kNPerBlock>{}),
@@ -539,7 +539,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
                                }
                                else
                                {
-                                   return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                                   return idx;
                                }
                            },
                            number<kKPerBlock>{}),

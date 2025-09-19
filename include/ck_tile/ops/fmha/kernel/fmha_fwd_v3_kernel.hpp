@@ -584,24 +584,24 @@ struct FmhaFwdV3Kernel
 
             auto k_dram_transformed = transform_tensor_view(
                 k_dram_naive,
-                make_tuple(
-                    make_functor_transform(
-                        [](auto idx) {
+                make_tuple(make_functor_transform(
+                               [](auto idx) {
 #if CK_TILE_REMAP_TOKEN_USING_DESC
-                            if constexpr(FmhaPipeline::kN0 == 32)
-                            {
-                                return bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(idx)));
-                            }
-                            else
-                            {
-                                return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
-                            }
+                                   if constexpr(FmhaPipeline::kN0 == 32)
+                                   {
+                                       return bit_cast<index_t>(
+                                           permute_bits_5(bit_cast<uint32_t>(idx)));
+                                   }
+                                   else
+                                   {
+                                       return idx;
+                                   }
 #else
-                            return idx;
+                                   return idx;
 #endif
-                        },
-                        kargs.seqlen_k - thread_key_token_offset),
-                    make_pass_through_transform(kargs.hdim_q)),
+                               },
+                               kargs.seqlen_k - thread_key_token_offset),
+                           make_pass_through_transform(kargs.hdim_q)),
                 make_tuple(sequence<0>{}, sequence<1>{}),
                 make_tuple(sequence<0>{}, sequence<1>{}));
 
@@ -620,24 +620,24 @@ struct FmhaFwdV3Kernel
 
             auto v_dram_transformed = transform_tensor_view(
                 v_dram_naive,
-                make_tuple(
-                    make_functor_transform(
-                        [](auto idx) {
+                make_tuple(make_functor_transform(
+                               [](auto idx) {
 #if CK_TILE_REMAP_TOKEN_USING_DESC
-                            if constexpr(FmhaPipeline::kK1 == 32)
-                            {
-                                return bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(idx)));
-                            }
-                            else
-                            {
-                                return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
-                            }
+                                   if constexpr(FmhaPipeline::kK1 == 32)
+                                   {
+                                       return bit_cast<index_t>(
+                                           permute_bits_5(bit_cast<uint32_t>(idx)));
+                                   }
+                                   else
+                                   {
+                                       return idx;
+                                   }
 #else
-                            return idx;
+                                   return idx;
 #endif
-                        },
-                        kargs.seqlen_k - thread_value_token_offset),
-                    make_pass_through_transform(kargs.hdim_v)),
+                               },
+                               kargs.seqlen_k - thread_value_token_offset),
+                           make_pass_through_transform(kargs.hdim_v)),
                 make_tuple(sequence<0>{}, sequence<1>{}),
                 make_tuple(sequence<0>{}, sequence<1>{}));
 
