@@ -60,7 +60,7 @@ struct fmha_fwd_v3_kernel_traits
     static constexpr bool is_masking         = IsMasking;
 
     //                                    M0   N0  K0   N1   K1
-    using fmha_block_tile      = sequence<256, 32, 128, 128, 32, 128>;
+    using fmha_block_tile      = sequence<256, 64, 128, 128, 64, 128>;
     using fmha_warp_gemm_shape = sequence<32, 32, 16>;
     using fmha_block_warps     = sequence<8, 1, 1>;
 
