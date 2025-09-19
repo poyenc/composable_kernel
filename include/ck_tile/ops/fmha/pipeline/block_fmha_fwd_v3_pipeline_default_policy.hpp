@@ -295,8 +295,8 @@ struct BlockFmhaV3PipelineDefaultPolicy
         return BlockGemmARegBRegCRegV2<GemmProblem, BlockGemmPolicy>{};
     }
 
-    static constexpr ck_tile::index_t kKLdsPadInBytes = 4 * 4;  // 4 dwords
-    static constexpr ck_tile::index_t kVLdsPadInBytes = 4 * 16; // 16 dwords
+    static constexpr ck_tile::index_t kKLdsPadInBytes = 0; // 4 dwords
+    static constexpr ck_tile::index_t kVLdsPadInBytes = 0; // 16 dwords
 
     template <typename Problem>
     CK_TILE_DEVICE static constexpr auto MakeKLdsStoreBlockDescriptor()
