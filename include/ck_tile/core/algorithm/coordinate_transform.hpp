@@ -1615,6 +1615,16 @@ struct functor_transform : public base_transform<1, 1>
     {
         return ck_tile::is_known_at_compile_time<UpLengths>::value;
     }
+
+    // Note: When using functor_transform, ensure that the transformed coordinates
+    // are always valid for vectorized load/store operations.
+    template <typename LowVectorLengths, typename LowVectorStrides>
+    CK_TILE_HOST_DEVICE static constexpr auto
+    calculate_upper_dimension_safe_vector_length_strides(const LowVectorLengths& low_vector_lengths,
+                                                         const LowVectorStrides& low_vector_strides)
+    {
+        return make_tuple(low_vector_lengths, low_vector_strides);
+    }
 };
 
 //*******************************************************************************************************
