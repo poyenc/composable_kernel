@@ -19,7 +19,7 @@ namespace ck_tile {
 template <typename T>
 constexpr T swap_bit_positions(T x, unsigned p, unsigned q)
 {
-    static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
 
     T bitp = (x >> p) & T(1);
     T bitq = (x >> q) & T(1);
@@ -32,23 +32,9 @@ constexpr T swap_bit_positions(T x, unsigned p, unsigned q)
 }
 
 template <typename T>
-constexpr T swap_bit12(T x)
-{
-    return swap_bit_positions<T>(x, 1u, 2u);
-}
-
-template <typename T>
-constexpr T swap_bit12_bit34(T x)
-{
-    x = swap_bit_positions<T>(x, 1u, 2u);
-    x = swap_bit_positions<T>(x, 3u, 4u);
-    return x;
-}
-
-template <typename T>
 constexpr T permute_bits_5(T x)
 {
-    static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
 
     T b0 = (x >> 0) & 1u;
     T b1 = (x >> 1) & 1u;
@@ -64,7 +50,7 @@ constexpr T permute_bits_5(T x)
 template <typename T>
 constexpr T inverse_permute_bits_5(T x)
 {
-    static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
 
     T y  = x & 31u;
     T c4 = (y >> 4) & 1u;
@@ -75,6 +61,72 @@ constexpr T inverse_permute_bits_5(T x)
 
     T orig = (c1 << 4) | (c0 << 3) | (c4 << 2) | (c3 << 1) | c2;
     return (x & ~T(31)) | orig;
+}
+
+template <typename T>
+constexpr T key_token_remap(T x)
+{
+    static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
+    const T lo = x & T(63);
+    const T hi = x & ~T(63);
+
+    T y = (lo & T(0x01))           // in0 -> out0
+          | ((lo & T(0x08)) >> 2)  // in3 -> out1
+          | ((lo & T(0x02)) << 1)  // in1 -> out2
+          | ((lo & T(0x10)) >> 1)  // in4 -> out3
+          | ((lo & T(0x20)) >> 1)  // in5 -> out4
+          | ((lo & T(0x04)) << 3); // in2 -> out5
+
+    return hi | y;
+}
+
+template <typename T>
+constexpr T inverse_key_token_remap(T y)
+{
+    static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
+    const T lo = y & T(63);
+    const T hi = y & ~T(63);
+
+    T x = (lo & T(0x01))           // out0 -> in0
+          | ((lo & T(0x04)) >> 1)  // out2 -> in1
+          | ((lo & T(0x20)) >> 3)  // out5 -> in2
+          | ((lo & T(0x02)) << 2)  // out1 -> in3
+          | ((lo & T(0x08)) << 1)  // out3 -> in4
+          | ((lo & T(0x10)) << 1); // out4 -> in5
+
+    return hi | x;
+}
+
+template <typename T>
+constexpr T value_token_remap(T x)
+{
+    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
+    const T lo = x & T(31);
+    const T hi = x & ~T(31);
+
+    T ylo = (lo & T(0x01))          // x0 -> y0
+            | ((lo & T(0x08)) >> 2) // x3 -> y1
+            | ((lo & T(0x02)) << 1) // x1 -> y2
+            | ((lo & T(0x04)) << 1) // x2 -> y3
+            | (lo & T(0x10));       // x4 -> y4
+
+    return hi | ylo;
+}
+
+template <typename T>
+constexpr T inverse_value_token_remap(T y)
+{
+    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
+    const T lo = y & T(31);
+    const T hi = y & ~T(31);
+
+    T xlo = (lo & T(0x01))          // y0 -> x0
+            | ((lo & T(0x04)) >> 1) // y2 -> x1
+            | ((lo & T(0x08)) >> 1) // y3 -> x2
+            | ((lo & T(0x02)) << 2) // y1 -> x3
+            | (lo & T(0x10));       // y4 -> x4
+
+    return hi | xlo;
 }
 
 template <typename FmhaPipeline_, typename EpiloguePipeline_>
@@ -594,7 +646,7 @@ struct FmhaFwdV3Kernel
                             }
                             else
                             {
-                                return bit_cast<index_t>(swap_bit12(bit_cast<uint32_t>(idx)));
+                                return bit_cast<index_t>(key_token_remap(bit_cast<uint32_t>(idx)));
                             }
 #else
                             return idx;
@@ -620,8 +672,26 @@ struct FmhaFwdV3Kernel
 
             auto v_dram_transformed = transform_tensor_view(
                 v_dram_naive,
-                make_tuple(make_pass_through_transform(kargs.seqlen_k - thread_value_token_offset),
-                           make_functor_transform([](auto idx) { return idx; }, kargs.hdim_v)),
+                make_tuple(make_functor_transform(
+                               [](auto idx) {
+#if CK_TILE_REMAP_TOKEN_USING_DESC
+                                   if constexpr(FmhaPipeline::kK1 == 32)
+                                   {
+                                       return bit_cast<index_t>(
+                                           permute_bits_5(bit_cast<uint32_t>(idx)));
+                                   }
+                                   else
+                                   {
+                                       return bit_cast<index_t>(
+                                           value_token_remap(bit_cast<uint32_t>(idx)));
+                                       ;
+                                   }
+#else
+                                   return idx;
+#endif
+                               },
+                               kargs.seqlen_k - thread_value_token_offset),
+                           make_pass_through_transform(kargs.hdim_v)),
                 make_tuple(sequence<0>{}, sequence<1>{}),
                 make_tuple(sequence<0>{}, sequence<1>{}));
 
