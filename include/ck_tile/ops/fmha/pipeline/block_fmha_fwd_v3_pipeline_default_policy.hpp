@@ -126,6 +126,9 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t kNPerBlock = Problem::BlockFmhaShape::kN1;
         constexpr index_t kKPerBlock = Problem::BlockFmhaShape::kN0;
 
+        constexpr index_t NumLoadUnits  = 2;
+        constexpr index_t kNPerLoadUnit = kNPerBlock / NumLoadUnits;
+
         constexpr index_t MaxVectorSize = 16 / sizeof(typename Problem::VDataType);
 
         constexpr index_t ElemPerThread = (kNPerBlock * kKPerBlock) / kBlockSize;
@@ -133,7 +136,7 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t kMaxVecLoad = min(ElemPerThread, MaxVectorSize);
 
         constexpr index_t NPerThread     = kMaxVecLoad;
-        constexpr index_t NThreads       = kNPerBlock / NPerThread;
+        constexpr index_t NThreads       = kNPerLoadUnit / NPerThread;
         constexpr index_t KThreadPerWarp = get_warp_size() / NThreads;
         constexpr index_t NumWarps       = kBlockSize / get_warp_size();
         constexpr index_t KPerThread     = kKPerBlock / (KThreadPerWarp * NumWarps);
@@ -141,11 +144,11 @@ struct BlockFmhaV3PipelineDefaultPolicy
         return make_static_tile_distribution(
             tile_distribution_encoding<sequence<1>,
                                        tuple<sequence<KPerThread, NumWarps, KThreadPerWarp>,
-                                             sequence<NThreads, NPerThread>>,
+                                             sequence<NumLoadUnits, NThreads, NPerThread>>,
                                        tuple<sequence<1>, sequence<1, 2>>,
-                                       tuple<sequence<1>, sequence<2, 0>>,
-                                       sequence<1, 2>,
-                                       sequence<0, 1>>{});
+                                       tuple<sequence<1>, sequence<2, 1>>,
+                                       sequence<1, 2, 2>,
+                                       sequence<0, 0, 2>>{});
     }
 
     template <typename Problem>
@@ -333,9 +336,9 @@ struct BlockFmhaV3PipelineDefaultPolicy
                        NumWarps*(NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad)>{},
                 number<NumWarps*(NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad)>{},
                 number<NThreadPerWarp * KThreadPerWarp * kKPack + NumElemsInPad>{},
-                number<KThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                number<kKPack>{},                  // KThreadPerWarp
-                number<1>{}),                      // kKPack
+                number<KThreadPerWarp * kKPack>{},
+                number<kKPack>{},
+                number<1>{}),
             number<kKPack>{},
             number<1>{});
 
@@ -464,40 +467,43 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t kNPerBlock = Problem::BlockFmhaShape::kN1;
         constexpr index_t kKPerBlock = Problem::BlockFmhaShape::kN0;
 
+        constexpr index_t NumLoadUnits  = 2;
+        constexpr index_t kNPerLoadUnit = kNPerBlock / NumLoadUnits;
+
         constexpr index_t kKPack = GetSmemVPackK<Problem>();
 
         constexpr index_t NumWarps       = Problem::BlockFmhaShape::NumWarps;
-        constexpr index_t NThreadPerWarp = kNPerBlock / kKPack;
+        constexpr index_t NThreadPerWarp = kNPerLoadUnit / kKPack;
         constexpr index_t KThreadPerWarp = get_warp_size() / NThreadPerWarp;
         constexpr index_t NumElemsInPad  = kVLdsPadInBytes / sizeof(typename Problem::VDataType);
         constexpr index_t NumIssues      = kKPerBlock / (KThreadPerWarp * NumWarps);
-
-        static_assert(NumWarps == 8);
-        static_assert(KThreadPerWarp == 4);
-        static_assert(NThreadPerWarp * KThreadPerWarp == 64);
+        static_assert(NumIssues == 1);
 
         constexpr auto v_lds_block_desc_0 = make_naive_tensor_descriptor(
-            make_tuple(number<NumIssues>{},
+            make_tuple(number<NumLoadUnits>{},
+                       number<NumIssues>{},
                        number<NumWarps>{},
                        number<KThreadPerWarp>{},
                        number<NThreadPerWarp>{},
                        number<kKPack>{}),
             make_tuple(
+                number<NumIssues *
+                       NumWarps*(KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad)>{},
                 number<NumWarps*(KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad)>{},
                 number<KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad>{},
-                number<NThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                number<kKPack>{},                  // KThreadPerWarp
-                number<1>{}),                      // kKPack
+                number<NThreadPerWarp * kKPack>{},
+                number<kKPack>{},
+                number<1>{}),
             number<kKPack>{},
             number<1>{});
 
         auto v_lds_block_desc = transform_tensor_descriptor(
             v_lds_block_desc_0,
-            make_tuple(
-                make_merge_transform(
-                    make_tuple(number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
-                make_merge_transform(make_tuple(number<NThreadPerWarp>{}, number<kKPack>{}))),
-            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
+            make_tuple(make_merge_transform(make_tuple(
+                           number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
+                       make_merge_transform(make_tuple(
+                           number<NumLoadUnits>{}, number<NThreadPerWarp>{}, number<kKPack>{}))),
+            make_tuple(sequence<1, 2, 3>{}, sequence<0, 4, 5>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return v_lds_block_desc;
@@ -509,40 +515,43 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t kNPerBlock = Problem::BlockFmhaShape::kN1;
         constexpr index_t kKPerBlock = Problem::BlockFmhaShape::kN0;
 
+        constexpr index_t NumLoadUnits  = 2;
+        constexpr index_t kNPerLoadUnit = kNPerBlock / NumLoadUnits;
+
         constexpr index_t kKPack = GetSmemVPackK<Problem>();
 
         constexpr index_t NumWarps       = Problem::BlockFmhaShape::NumWarps;
-        constexpr index_t NThreadPerWarp = kNPerBlock / kKPack;
+        constexpr index_t NThreadPerWarp = kNPerLoadUnit / kKPack;
         constexpr index_t KThreadPerWarp = get_warp_size() / NThreadPerWarp;
         constexpr index_t NumElemsInPad  = kVLdsPadInBytes / sizeof(typename Problem::VDataType);
         constexpr index_t NumIssues      = kKPerBlock / (KThreadPerWarp * NumWarps);
-
-        static_assert(NumWarps == 8);
-        static_assert(KThreadPerWarp == 4);
-        static_assert(NThreadPerWarp * KThreadPerWarp == 64);
+        static_assert(NumIssues == 1);
 
         constexpr auto v_lds_block_desc_0 = make_naive_tensor_descriptor(
-            make_tuple(number<NumIssues>{},
+            make_tuple(number<NumLoadUnits>{},
+                       number<NumIssues>{},
                        number<NumWarps>{},
                        number<KThreadPerWarp>{},
                        number<NThreadPerWarp>{},
                        number<kKPack>{}),
             make_tuple(
+                number<NumIssues *
+                       NumWarps*(KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad)>{},
                 number<NumWarps*(KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad)>{},
                 number<KThreadPerWarp * NThreadPerWarp * kKPack + NumElemsInPad>{},
-                number<NThreadPerWarp * kKPack>{}, // NThreadPerWarp
-                number<kKPack>{},                  // KThreadPerWarp
-                number<1>{}),                      // kKPack
+                number<NThreadPerWarp * kKPack>{},
+                number<kKPack>{},
+                number<1>{}),
             number<kKPack>{},
             number<1>{});
 
-        auto desc = transform_tensor_descriptor(
+        constexpr auto desc = transform_tensor_descriptor(
             v_lds_block_desc_0,
-            make_tuple(
-                make_merge_transform(
-                    make_tuple(number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
-                make_merge_transform(make_tuple(number<NThreadPerWarp>{}, number<kKPack>{}))),
-            make_tuple(sequence<0, 1, 2>{}, sequence<3, 4>{}),
+            make_tuple(make_merge_transform(make_tuple(
+                           number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
+                       make_merge_transform(make_tuple(
+                           number<NumLoadUnits>{}, number<NThreadPerWarp>{}, number<kKPack>{}))),
+            make_tuple(sequence<1, 2, 3>{}, sequence<0, 4, 5>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
 
         return transform_tensor_descriptor(
