@@ -412,7 +412,6 @@ struct BlockFmhaV3PipelineDefaultPolicy
                                {
                                    return bit_cast<index_t>(
                                        inverse_key_token_remap(bit_cast<uint32_t>(idx)));
-                                   ;
                                }
                            },
                            number<kNPerBlock>{}),
