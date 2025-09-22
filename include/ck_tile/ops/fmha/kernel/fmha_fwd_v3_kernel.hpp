@@ -66,6 +66,7 @@ constexpr T inverse_permute_bits_5(T x)
 template <typename T>
 constexpr T key_token_remap(T x)
 {
+#if 0
     static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
     const T lo = x & T(63);
     const T hi = x & ~T(63);
@@ -78,11 +79,15 @@ constexpr T key_token_remap(T x)
           | ((lo & T(0x04)) << 3); // in2 -> out5
 
     return hi | y;
+#else
+    return x;
+#endif
 }
 
 template <typename T>
 constexpr T inverse_key_token_remap(T y)
 {
+#if 0
     static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
     const T lo = y & T(63);
     const T hi = y & ~T(63);
@@ -95,6 +100,9 @@ constexpr T inverse_key_token_remap(T y)
           | ((lo & T(0x10)) << 1); // out4 -> in5
 
     return hi | x;
+#else
+    return y;
+#endif
 }
 
 template <typename T>

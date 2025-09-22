@@ -444,6 +444,7 @@ struct BlockFmhaFwdV3Pipeline
         const auto f_max = [](auto e0, auto e1) { return max(e0, e1); };
         const auto f_sum = [](auto e0, auto e1) { return e0 + e1; };
 
+        using PartitionIndex    = sequence<0, 0>;
         auto k_lds_window_store = generate_tuple(
             [&](auto write_idx) {
                 auto k_buf = (write_idx == 0 ? smem_k0 : smem_k1);
@@ -464,7 +465,8 @@ struct BlockFmhaFwdV3Pipeline
                                      make_lds_tile_window<KDataType>(
                                          nullptr,
                                          Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
-                                     Policy::template MakeKRegTileDistribution<Problem>())),
+                                     Policy::template MakeKRegTileDistribution<Problem>(),
+                                     PartitionIndex{})),
                                  2>
             k_lds_window_load;
 
@@ -472,7 +474,8 @@ struct BlockFmhaFwdV3Pipeline
                                      make_lds_tile_window<VDataType>(
                                          nullptr,
                                          Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
-                                     Policy::template MakeVRegTileDistribution<Problem>())),
+                                     Policy::template MakeVRegTileDistribution<Problem>(),
+                                     sequence<-1, -1>{})),
                                  2>
             v_lds_window_load;
 
@@ -520,7 +523,8 @@ struct BlockFmhaFwdV3Pipeline
                                              return smem_k1;
                                      }(),
                                      Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
-                                 Policy::template MakeKRegTileDistribution<Problem>());
+                                 Policy::template MakeKRegTileDistribution<Problem>(),
+                                 PartitionIndex{});
         });
 
         static_for<0, 2, 1>{}([&](auto idx) {
@@ -533,7 +537,8 @@ struct BlockFmhaFwdV3Pipeline
                                              return smem_v1;
                                      }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
-                                 Policy::template MakeVRegTileDistribution<Problem>());
+                                 Policy::template MakeVRegTileDistribution<Problem>(),
+                                 sequence<-1, -1>{});
         });
 
         {
@@ -688,7 +693,20 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto K_lds_load = [&](auto k_lds_read_idx) {
-            kv_tile.k_tile = load_tile(k_lds_window_load(k_lds_read_idx));
+            [[maybe_unused]] index_t start_row    = get_lane_id() % 32;
+            [[maybe_unused]] index_t start_col    = get_lane_id() / 32 * 8;
+            [[maybe_unused]] index_t warp_offset  = (start_row / 8) * (4 * 4) / 2;
+            [[maybe_unused]] index_t start_offset = (start_row * 64) + start_col + warp_offset;
+#if 0
+            DEBUG_STMTS
+            {
+                printf("[POYENC] warp offset: %d\n", warp_offset);
+                printf("[POYENC] start row/col: %d/%d\n", start_row, start_col);
+                printf("[POYENC] start offset: %d\n", start_offset);
+            }
+#endif
+
+            kv_tile.k_tile = load_tile(k_lds_window_load(k_lds_read_idx), start_offset);
         };
 
         auto V_mem_load = [&](auto v_lds_write_idx) {
@@ -1131,6 +1149,19 @@ struct BlockFmhaFwdV3Pipeline
 
             s_waitcnt_lgkmcnt<0>();
             __builtin_amdgcn_s_barrier();
+
+#if 0
+            DEBUG_STMTS {
+                const auto size = kv_tile.k_tile.thread_buf_.size();
+                for (int issue = 0; issue < size / 8; ++issue) {
+                    printf("[POYENC] k_tile[%2d] = %5.2f", issue, ck_tile::type_convert<float>(kv_tile.k_tile.thread_buf_[issue * 8]));
+                    for (int i = 1; i < 8; ++i) {
+                        printf(", %5.2f", ck_tile::type_convert<float>(kv_tile.k_tile.thread_buf_[issue * 8 + i]));
+                    }
+                    printf("\n");
+                }
+            }
+#endif
 
             // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
             if(1 < num_total_loop)
