@@ -82,8 +82,10 @@ struct tensor_view
                             index_t linear_offset,
                             bool_constant<oob_conditional_check> = {}) const
     {
+        auto offset = coord.get_offset();
+        __builtin_amdgcn_sched_barrier(0);
         return buf_.template get<X>(
-            coord.get_offset() / PackedSize,
+            offset / PackedSize,
             linear_offset / PackedSize,
             coordinate_has_valid_offset_assuming_top_index_is_valid(desc_, coord),
             bool_constant<oob_conditional_check>{});
@@ -101,7 +103,9 @@ struct tensor_view
                             bool is_valid_element, // flag
                             bool_constant<oob_conditional_check> = {}) const
     {
-        return buf_.template get<X>(coord.get_offset() / PackedSize,
+        auto offset = coord.get_offset();
+        __builtin_amdgcn_sched_barrier(0);
+        return buf_.template get<X>(offset / PackedSize,
                                     linear_offset / PackedSize,
                                     is_valid_element,
                                     bool_constant<oob_conditional_check>{});

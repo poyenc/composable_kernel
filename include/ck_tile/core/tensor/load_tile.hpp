@@ -18,24 +18,73 @@
 
 namespace ck_tile {
 
-template <typename TileWindow_, index_t i_access = -1, bool oob_conditional_check = true>
+template <typename TileWindow_,
+          index_t i_access           = -1,
+          bool oob_conditional_check = true,
+          bool debug_print           = false>
+    requires std::is_class_v<TileWindow_>
+CK_TILE_DEVICE auto load_tile(const TileWindow_& tile_window,
+                              index_t offset,
+                              number<i_access>                     = {},
+                              bool_constant<oob_conditional_check> = {},
+                              bool_constant<debug_print>           = {})
+{
+    return tile_window.load(offset,
+                            number<i_access>{},
+                            bool_constant<oob_conditional_check>{},
+                            bool_constant<debug_print>{});
+}
+
+template <typename TileWindow_,
+          index_t i_access           = -1,
+          bool oob_conditional_check = true,
+          bool debug_print           = false>
+    requires std::is_class_v<TileWindow_>
 CK_TILE_DEVICE auto load_tile(const TileWindow_& tile_window,
                               number<i_access>                     = {},
-                              bool_constant<oob_conditional_check> = {})
+                              bool_constant<oob_conditional_check> = {},
+                              bool_constant<debug_print>           = {})
 {
-    return tile_window.load(number<i_access>{}, bool_constant<oob_conditional_check>{});
+    return tile_window.load(
+        number<i_access>{}, bool_constant<oob_conditional_check>{}, bool_constant<debug_print>{});
 }
 
 template <typename DistributedTensor_,
           typename TileWindow_,
           index_t i_access           = -1,
-          bool oob_conditional_check = true>
+          bool oob_conditional_check = true,
+          bool debug_print           = false>
+    requires std::is_class_v<DistributedTensor_> && std::is_class_v<TileWindow_>
+CK_TILE_DEVICE auto load_tile(DistributedTensor_& dst_tile,
+                              const TileWindow_& tile_window,
+                              index_t offset,
+                              number<i_access>                     = {},
+                              bool_constant<oob_conditional_check> = {},
+                              bool_constant<debug_print>           = {})
+{
+    return tile_window.load(offset,
+                            dst_tile,
+                            number<i_access>{},
+                            bool_constant<oob_conditional_check>{},
+                            bool_constant<debug_print>{});
+}
+
+template <typename DistributedTensor_,
+          typename TileWindow_,
+          index_t i_access           = -1,
+          bool oob_conditional_check = true,
+          bool debug_print           = false>
+    requires std::is_class_v<DistributedTensor_> && std::is_class_v<TileWindow_>
 CK_TILE_DEVICE auto load_tile(DistributedTensor_& dst_tile,
                               const TileWindow_& tile_window,
                               number<i_access>                     = {},
-                              bool_constant<oob_conditional_check> = {})
+                              bool_constant<oob_conditional_check> = {},
+                              bool_constant<debug_print>           = {})
 {
-    return tile_window.load(dst_tile, number<i_access>{}, bool_constant<oob_conditional_check>{});
+    return tile_window.load(dst_tile,
+                            number<i_access>{},
+                            bool_constant<oob_conditional_check>{},
+                            bool_constant<debug_print>{});
 }
 
 /**
@@ -51,6 +100,7 @@ template <typename T,
           typename BottomTensorView_,
           typename WindowLengths_,
           typename TileDistribution_,
+          typename PartitoinIndex_,
           index_t NumCoord,
           index_t i_access           = -1,
           bool oob_conditional_check = true,
@@ -59,6 +109,7 @@ CK_TILE_DEVICE auto load_tile_raw(T& tile,
                                   const tile_window_with_static_distribution<BottomTensorView_,
                                                                              WindowLengths_,
                                                                              TileDistribution_,
+                                                                             PartitoinIndex_,
                                                                              NumCoord>& tile_window,
                                   number<i_access>                     = {},
                                   bool_constant<oob_conditional_check> = {},
