@@ -108,6 +108,7 @@ constexpr T inverse_key_token_remap(T y)
 template <typename T>
 constexpr T value_token_remap(T x)
 {
+#if 0
     static_assert(std::is_unsigned_v<T>, "T must be unsigned");
     const T lo = x & T(31);
     const T hi = x & ~T(31);
@@ -119,11 +120,15 @@ constexpr T value_token_remap(T x)
             | (lo & T(0x10));       // x4 -> y4
 
     return hi | ylo;
+#else
+    return x;
+#endif
 }
 
 template <typename T>
 constexpr T inverse_value_token_remap(T y)
 {
+#if 0
     static_assert(std::is_unsigned_v<T>, "T must be unsigned");
     const T lo = y & T(31);
     const T hi = y & ~T(31);
@@ -135,6 +140,9 @@ constexpr T inverse_value_token_remap(T y)
             | (lo & T(0x10));       // y4 -> x4
 
     return hi | xlo;
+#else
+    return y;
+#endif
 }
 
 template <typename FmhaPipeline_, typename EpiloguePipeline_>

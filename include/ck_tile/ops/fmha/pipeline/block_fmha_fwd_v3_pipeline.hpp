@@ -475,7 +475,7 @@ struct BlockFmhaFwdV3Pipeline
                                          nullptr,
                                          Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                      Policy::template MakeVRegTileDistribution<Problem>(),
-                                     sequence<-1, -1>{})),
+                                     PartitionIndex{})),
                                  2>
             v_lds_window_load;
 
@@ -538,7 +538,7 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeVRegTileDistribution<Problem>(),
-                                 sequence<-1, -1>{});
+                                 PartitionIndex{});
         });
 
         {
@@ -720,7 +720,14 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
-            kv_tile.v_tile = load_tile_transpose(v_lds_window_load(v_lds_read_idx));
+            [[maybe_unused]] index_t i_group       = get_lane_id() / 16;
+            [[maybe_unused]] index_t local_lane_id = get_lane_id() % 16;
+            [[maybe_unused]] index_t start_row     = (i_group / 2) * 4 + local_lane_id / 4;
+            [[maybe_unused]] index_t start_col     = (i_group % 2) * 16 + (local_lane_id % 4) * 4;
+            [[maybe_unused]] index_t start_offset  = (start_row * 64) + start_col;
+
+            kv_tile.v_tile = load_tile_transpose(
+                v_lds_window_load(v_lds_read_idx), start_offset, bool_constant<true>{});
         };
 
         decltype(m) m_old;
