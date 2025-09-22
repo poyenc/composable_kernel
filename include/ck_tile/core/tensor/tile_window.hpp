@@ -438,23 +438,49 @@ struct tile_window_with_static_distribution
         });
     }
 
-    template <typename Policy, index_t i_access_unsupport_ = -1, bool oob_conditional_check = true>
-    CK_TILE_DEVICE auto load_transpose() const
+    template <typename Policy,
+              index_t i_access_unsupport_ = -1,
+              bool oob_conditional_check  = true,
+              bool debug_print            = false>
+    CK_TILE_DEVICE auto load_transpose(number<i_access_unsupport_>          = {},
+                                       bool_constant<oob_conditional_check> = {},
+                                       bool_constant<debug_print>           = {}) const
+    {
+        return this->template load_transpose<Policy>(0,
+                                                     number<i_access_unsupport_>{},
+                                                     bool_constant<oob_conditional_check>{},
+                                                     bool_constant<debug_print>{});
+    }
+
+    template <typename Policy,
+              index_t i_access_unsupport_ = -1,
+              bool oob_conditional_check  = true,
+              bool debug_print            = false>
+    CK_TILE_DEVICE auto load_transpose(index_t offset,
+                                       number<i_access_unsupport_>          = {},
+                                       bool_constant<oob_conditional_check> = {},
+                                       bool_constant<debug_print>           = {}) const
     {
         constexpr auto tile_dstr = typename Base::TileDstr{};
         auto dst_tensor = make_static_distributed_tensor<typename Base::DataType>(tile_dstr);
-        this->template load_transpose<Policy>(
-            dst_tensor, number<i_access_unsupport_>{}, bool_constant<oob_conditional_check>{});
+        this->template load_transpose<Policy>(offset,
+                                              dst_tensor,
+                                              number<i_access_unsupport_>{},
+                                              bool_constant<oob_conditional_check>{},
+                                              bool_constant<debug_print>{});
         return dst_tensor;
     }
 
     template <typename Policy,
               typename DistributedTensor,
               index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true>
-    CK_TILE_DEVICE auto load_transpose(DistributedTensor& dst_tensor,
+              bool oob_conditional_check  = true,
+              bool debug_print            = false>
+    CK_TILE_DEVICE auto load_transpose(index_t offset,
+                                       DistributedTensor& dst_tensor,
                                        number<i_access_unsupport_>          = {},
-                                       bool_constant<oob_conditional_check> = {}) const
+                                       bool_constant<oob_conditional_check> = {},
+                                       bool_constant<debug_print>           = {}) const
     {
         using Traits   = typename Base::Traits;
         using vector_t = typename Traits::vector_t;
@@ -480,7 +506,7 @@ struct tile_window_with_static_distribution
                 const vector_t vec_value =
                     this->get_bottom_tensor_view()
                         .template get_transpose_vectorized_elements<vector_t>(
-                            bottom_tensor_thread_coord, 0);
+                            bottom_tensor_thread_coord, offset);
                 // write into distributed tensor
                 static_for<0, Traits::ScalarPerVector, 1>{}([&](auto j) {
                     constexpr auto orig_idx_ys = generate_tuple(
