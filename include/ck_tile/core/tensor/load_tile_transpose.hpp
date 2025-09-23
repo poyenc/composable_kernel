@@ -413,8 +413,7 @@ load_tile_transpose(const tile_window_with_static_distribution<BottomTensorView_
         typename BottomTensorView_::DataType>::TransposedDstrEncode;
     auto out_tensor = make_static_distributed_tensor<typename BottomTensorView_::DataType>(
         make_static_tile_distribution(OutTileDstrEncode{}));
-    auto trans_tensor =
-        tile_window.template load_transpose<Policy>(offset, number<-1>{}, bool_constant<true>{});
+    auto trans_tensor           = tile_window.template load_transpose<Policy>(offset);
     constexpr auto input_distr  = TileDistribution_{};
     constexpr auto output_distr = make_static_tile_distribution(OutTileDstrEncode{});
 
