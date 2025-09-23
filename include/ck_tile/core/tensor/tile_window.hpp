@@ -126,46 +126,34 @@ struct tile_window_with_static_distribution
         });
     }
 
-    template <index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true,
-              bool debug_print            = false>
+    template <index_t i_access_unsupport_ = -1, bool oob_conditional_check = true>
     CK_TILE_DEVICE auto load(number<i_access_unsupport_>          = {},
-                             bool_constant<oob_conditional_check> = {},
-                             bool_constant<debug_print>           = {}) const
+                             bool_constant<oob_conditional_check> = {}) const
     {
-        return load(0,
-                    number<i_access_unsupport_>{},
-                    bool_constant<oob_conditional_check>{},
-                    bool_constant<debug_print>{});
+        return load(0, number<i_access_unsupport_>{}, bool_constant<oob_conditional_check>{});
     }
 
-    template <index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true,
-              bool debug_print            = false>
+    template <index_t i_access_unsupport_ = -1, bool oob_conditional_check = true>
     CK_TILE_DEVICE auto load(index_t offset,
                              number<i_access_unsupport_>          = {},
-                             bool_constant<oob_conditional_check> = {},
-                             bool_constant<debug_print>           = {}) const
+                             bool_constant<oob_conditional_check> = {}) const
     {
         constexpr auto tile_dstr = typename Base::TileDstr{};
         auto dst_tensor = make_static_distributed_tensor<typename Base::DataType>(tile_dstr);
         load(offset,
              dst_tensor,
              number<i_access_unsupport_>{},
-             bool_constant<oob_conditional_check>{},
-             bool_constant<debug_print>{});
+             bool_constant<oob_conditional_check>{});
         return dst_tensor;
     }
 
     template <typename DistributedTensor,
               index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true,
-              bool debug_print            = false>
+              bool oob_conditional_check  = true>
     CK_TILE_DEVICE auto load(index_t offset,
                              DistributedTensor& dst_tensor,
                              number<i_access_unsupport_>          = {},
-                             bool_constant<oob_conditional_check> = {},
-                             bool_constant<debug_print>           = {}) const
+                             bool_constant<oob_conditional_check> = {}) const
     {
         using Traits   = typename Base::Traits;
         using vector_t = typename Traits::vector_t;
@@ -438,49 +426,36 @@ struct tile_window_with_static_distribution
         });
     }
 
-    template <typename Policy,
-              index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true,
-              bool debug_print            = false>
+    template <typename Policy, index_t i_access_unsupport_ = -1, bool oob_conditional_check = true>
     CK_TILE_DEVICE auto load_transpose(number<i_access_unsupport_>          = {},
-                                       bool_constant<oob_conditional_check> = {},
-                                       bool_constant<debug_print>           = {}) const
+                                       bool_constant<oob_conditional_check> = {}) const
     {
-        return this->template load_transpose<Policy>(0,
-                                                     number<i_access_unsupport_>{},
-                                                     bool_constant<oob_conditional_check>{},
-                                                     bool_constant<debug_print>{});
+        return this->template load_transpose<Policy>(
+            0, number<i_access_unsupport_>{}, bool_constant<oob_conditional_check>{});
     }
 
-    template <typename Policy,
-              index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true,
-              bool debug_print            = false>
+    template <typename Policy, index_t i_access_unsupport_ = -1, bool oob_conditional_check = true>
     CK_TILE_DEVICE auto load_transpose(index_t offset,
                                        number<i_access_unsupport_>          = {},
-                                       bool_constant<oob_conditional_check> = {},
-                                       bool_constant<debug_print>           = {}) const
+                                       bool_constant<oob_conditional_check> = {}) const
     {
         constexpr auto tile_dstr = typename Base::TileDstr{};
         auto dst_tensor = make_static_distributed_tensor<typename Base::DataType>(tile_dstr);
         this->template load_transpose<Policy>(offset,
                                               dst_tensor,
                                               number<i_access_unsupport_>{},
-                                              bool_constant<oob_conditional_check>{},
-                                              bool_constant<debug_print>{});
+                                              bool_constant<oob_conditional_check>{});
         return dst_tensor;
     }
 
     template <typename Policy,
               typename DistributedTensor,
               index_t i_access_unsupport_ = -1,
-              bool oob_conditional_check  = true,
-              bool debug_print            = false>
+              bool oob_conditional_check  = true>
     CK_TILE_DEVICE auto load_transpose(index_t offset,
                                        DistributedTensor& dst_tensor,
                                        number<i_access_unsupport_>          = {},
-                                       bool_constant<oob_conditional_check> = {},
-                                       bool_constant<debug_print>           = {}) const
+                                       bool_constant<oob_conditional_check> = {}) const
     {
         using Traits   = typename Base::Traits;
         using vector_t = typename Traits::vector_t;

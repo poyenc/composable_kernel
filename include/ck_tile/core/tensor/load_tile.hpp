@@ -18,73 +18,51 @@
 
 namespace ck_tile {
 
-template <typename TileWindow_,
-          index_t i_access           = -1,
-          bool oob_conditional_check = true,
-          bool debug_print           = false>
+template <typename TileWindow_, index_t i_access = -1, bool oob_conditional_check = true>
     requires std::is_class_v<TileWindow_>
 CK_TILE_DEVICE auto load_tile(const TileWindow_& tile_window,
                               index_t offset,
                               number<i_access>                     = {},
-                              bool_constant<oob_conditional_check> = {},
-                              bool_constant<debug_print>           = {})
+                              bool_constant<oob_conditional_check> = {})
 {
-    return tile_window.load(offset,
-                            number<i_access>{},
-                            bool_constant<oob_conditional_check>{},
-                            bool_constant<debug_print>{});
+    return tile_window.load(offset, number<i_access>{}, bool_constant<oob_conditional_check>{});
 }
 
-template <typename TileWindow_,
-          index_t i_access           = -1,
-          bool oob_conditional_check = true,
-          bool debug_print           = false>
+template <typename TileWindow_, index_t i_access = -1, bool oob_conditional_check = true>
     requires std::is_class_v<TileWindow_>
 CK_TILE_DEVICE auto load_tile(const TileWindow_& tile_window,
                               number<i_access>                     = {},
-                              bool_constant<oob_conditional_check> = {},
-                              bool_constant<debug_print>           = {})
+                              bool_constant<oob_conditional_check> = {})
+{
+    return tile_window.load(number<i_access>{}, bool_constant<oob_conditional_check>{});
+}
+
+template <typename DistributedTensor_,
+          typename TileWindow_,
+          index_t i_access           = -1,
+          bool oob_conditional_check = true>
+    requires std::is_class_v<DistributedTensor_> && std::is_class_v<TileWindow_>
+CK_TILE_DEVICE auto load_tile(DistributedTensor_& dst_tile,
+                              const TileWindow_& tile_window,
+                              index_t offset,
+                              number<i_access>                     = {},
+                              bool_constant<oob_conditional_check> = {})
 {
     return tile_window.load(
-        number<i_access>{}, bool_constant<oob_conditional_check>{}, bool_constant<debug_print>{});
+        offset, dst_tile, number<i_access>{}, bool_constant<oob_conditional_check>{});
 }
 
 template <typename DistributedTensor_,
           typename TileWindow_,
           index_t i_access           = -1,
-          bool oob_conditional_check = true,
-          bool debug_print           = false>
-    requires std::is_class_v<DistributedTensor_> && std::is_class_v<TileWindow_>
-CK_TILE_DEVICE auto load_tile(DistributedTensor_& dst_tile,
-                              const TileWindow_& tile_window,
-                              index_t offset,
-                              number<i_access>                     = {},
-                              bool_constant<oob_conditional_check> = {},
-                              bool_constant<debug_print>           = {})
-{
-    return tile_window.load(offset,
-                            dst_tile,
-                            number<i_access>{},
-                            bool_constant<oob_conditional_check>{},
-                            bool_constant<debug_print>{});
-}
-
-template <typename DistributedTensor_,
-          typename TileWindow_,
-          index_t i_access           = -1,
-          bool oob_conditional_check = true,
-          bool debug_print           = false>
+          bool oob_conditional_check = true>
     requires std::is_class_v<DistributedTensor_> && std::is_class_v<TileWindow_>
 CK_TILE_DEVICE auto load_tile(DistributedTensor_& dst_tile,
                               const TileWindow_& tile_window,
                               number<i_access>                     = {},
-                              bool_constant<oob_conditional_check> = {},
-                              bool_constant<debug_print>           = {})
+                              bool_constant<oob_conditional_check> = {})
 {
-    return tile_window.load(dst_tile,
-                            number<i_access>{},
-                            bool_constant<oob_conditional_check>{},
-                            bool_constant<debug_print>{});
+    return tile_window.load(dst_tile, number<i_access>{}, bool_constant<oob_conditional_check>{});
 }
 
 /**

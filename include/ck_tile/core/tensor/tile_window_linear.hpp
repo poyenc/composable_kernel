@@ -310,10 +310,8 @@ struct tile_window_linear
         }
     }
 
-    template <index_t i_access = -1, bool oob_conditional_check = true, bool debug_print = false>
-    CK_TILE_DEVICE auto load(number<i_access>                     = {},
-                             bool_constant<oob_conditional_check> = {},
-                             bool_constant<debug_print>           = {}) const
+    template <index_t i_access = -1, bool oob_conditional_check = true>
+    CK_TILE_DEVICE auto load(number<i_access> = {}, bool_constant<oob_conditional_check> = {}) const
     {
         using vector_t = typename Base::Traits::vector_t;
         using SFC_Ys   = typename Base::Traits::SFC_Ys;
@@ -364,14 +362,10 @@ struct tile_window_linear
         return dst_tensor;
     }
 
-    template <typename DstTile,
-              index_t i_access           = -1,
-              bool oob_conditional_check = true,
-              bool debug_print           = false>
+    template <typename DstTile, index_t i_access = -1, bool oob_conditional_check = true>
     CK_TILE_DEVICE auto load(DstTile& dst_tensor,
                              number<i_access>                     = {},
-                             bool_constant<oob_conditional_check> = {},
-                             bool_constant<debug_print>           = {}) const
+                             bool_constant<oob_conditional_check> = {}) const
     {
         using vector_t = typename Base::Traits::vector_t;
         using SFC_Ys   = typename Base::Traits::SFC_Ys;
