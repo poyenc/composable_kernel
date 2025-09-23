@@ -963,54 +963,48 @@ make_tile_window(const tile_window_with_static_lengths<TensorView, WindowLengths
         tile_window.get_bottom_tensor_view(), tile_window.get_window_lengths(), origin};
 }
 
-template <typename TensorView, typename WindowLengths, typename StaticTileDistribution>
+template <typename TensorView,
+          typename WindowLengths,
+          typename StaticTileDistribution,
+          typename PartitionIndex = sequence<-1, -1>>
 CK_TILE_DEVICE constexpr auto
 make_tile_window(const tile_window_with_static_lengths<TensorView, WindowLengths>& tile_window,
                  const multi_index<TensorView::get_num_of_dimension()>& origin,
-                 const StaticTileDistribution& tile_distribution)
+                 const StaticTileDistribution& tile_distribution,
+                 PartitionIndex = {})
 {
     return make_tile_window(tile_window.get_bottom_tensor_view(),
                             tile_window.get_window_lengths(),
                             origin,
-                            tile_distribution);
-}
-
-template <typename TensorView, typename WindowLengths, typename StaticTileDistribution>
-CK_TILE_DEVICE constexpr auto
-make_tile_window(const tile_window_with_static_lengths<TensorView, WindowLengths>& tile_window,
-                 const StaticTileDistribution& tile_distribution)
-{
-    return make_tile_window(tile_window.get_bottom_tensor_view(),
-                            tile_window.get_window_lengths(),
-                            tile_window.get_window_origin(),
-                            tile_distribution);
+                            tile_distribution,
+                            PartitionIndex{});
 }
 
 template <typename TensorView,
           typename WindowLengths,
           typename StaticTileDistribution,
-          typename PartitionIndex>
+          typename PartitionIndex = sequence<-1, -1>>
 CK_TILE_DEVICE constexpr auto
 make_tile_window(const tile_window_with_static_lengths<TensorView, WindowLengths>& tile_window,
                  const StaticTileDistribution& tile_distribution,
-                 const PartitionIndex& parition_index)
+                 PartitionIndex = {})
 {
     return make_tile_window(tile_window.get_bottom_tensor_view(),
                             tile_window.get_window_lengths(),
                             tile_window.get_window_origin(),
                             tile_distribution,
-                            parition_index);
+                            PartitionIndex{});
 }
 
-template <typename TensorView, typename WindowLengths, typename StaticTileDistribution>
+template <typename TensorView,
+          typename WindowLengths,
+          typename StaticTileDistribution,
+          typename PartitionIndex = sequence<-1, -1>>
 CK_TILE_DEVICE constexpr auto
 make_tile_window_raw(const tile_window_with_static_lengths<TensorView, WindowLengths>& tile_window,
                      const StaticTileDistribution& tile_distribution)
 {
-    auto w = make_tile_window(tile_window.get_bottom_tensor_view(),
-                              tile_window.get_window_lengths(),
-                              tile_window.get_window_origin(),
-                              tile_distribution);
+    auto w = make_tile_window(tile_window, tile_distribution, PartitionIndex{});
     w.init_raw();
     return w;
 }
