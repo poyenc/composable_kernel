@@ -18,12 +18,15 @@
 
 namespace ck_tile {
 
+// Use SFINAE by declaring offset as integral<Offset> rather than index_t, in order to avoid
+// overload ambiguity caused by the implicit number<> to index_t conversion
 template <typename TileWindow_,
+          typename Offset,
           index_t i_access           = -1,
           bool oob_conditional_check = true,
-          typename                   = std::enable_if_t<std::is_class_v<TileWindow_>>>
+          typename = std::enable_if_t<std::is_class_v<TileWindow_> && std::is_integral_v<Offset>>>
 CK_TILE_DEVICE auto load_tile(const TileWindow_& tile_window,
-                              index_t offset,
+                              Offset offset,
                               number<i_access>                     = {},
                               bool_constant<oob_conditional_check> = {})
 {
@@ -43,13 +46,14 @@ CK_TILE_DEVICE auto load_tile(const TileWindow_& tile_window,
 
 template <typename DistributedTensor_,
           typename TileWindow_,
+          typename Offset,
           index_t i_access           = -1,
           bool oob_conditional_check = true,
-          typename =
-              std::enable_if_t<std::is_class_v<DistributedTensor_> && std::is_class_v<TileWindow_>>>
+          typename                   = std::enable_if_t<std::is_class_v<DistributedTensor_> &&
+                                                        std::is_class_v<TileWindow_> && std::is_integral_v<Offset>>>
 CK_TILE_DEVICE auto load_tile(DistributedTensor_& dst_tile,
                               const TileWindow_& tile_window,
-                              index_t offset,
+                              Offset offset,
                               number<i_access>                     = {},
                               bool_constant<oob_conditional_check> = {})
 {
