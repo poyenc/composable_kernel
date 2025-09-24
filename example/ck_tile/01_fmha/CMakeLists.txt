@@ -216,6 +216,13 @@ if(HAS_DISABLE_PACKED_FP32)
   )
 endif()
 
+check_cxx_compiler_flag("-mllvm --greedy-reverse-local-assignment" HAS_GREEDY_REVERSE_LOCAL_ASSIGNMENT)
+if(HAS_GREEDY_REVERSE_LOCAL_ASSIGNMENT)
+  list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
+    -mllvm --greedy-reverse-local-assignment
+  )
+endif()
+
 target_compile_options(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS})
 target_compile_definitions(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_DEFINITIONS})
 # TODO: we have to turn off this global prop, otherwise the progress bar generated
