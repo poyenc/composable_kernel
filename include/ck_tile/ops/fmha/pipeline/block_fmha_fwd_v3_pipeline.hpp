@@ -541,6 +541,21 @@ struct BlockFmhaFwdV3Pipeline
                                  PartitionIndex{});
         });
 
+        const index_t k_lds_load_offset = [] {
+            index_t start_row    = get_lane_id() % 32;
+            index_t start_col    = get_lane_id() / 32 * 8;
+            index_t warp_offset  = (start_row / 8) * (4 * 4) / 2;
+            return (start_row * 64) + start_col + warp_offset;
+        }();
+
+        const index_t v_lds_load_offset = [] {
+            index_t group_idx     = get_lane_id() / 16;
+            index_t local_lane_id = get_lane_id() % 16;
+            index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
+            index_t start_col     = (group_idx % 2) * 16 + (local_lane_id % 4) * 4;
+            return (start_row * 64) + start_col;
+        }();
+
         {
             auto origin_q      = load_tile(q_dram_window);
             auto transformed_q = tile_elementwise_in(q_element_func, origin_q);
@@ -693,12 +708,7 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto K_lds_load = [&](auto k_lds_read_idx) {
-            index_t start_row    = get_lane_id() % 32;
-            index_t start_col    = get_lane_id() / 32 * 8;
-            index_t warp_offset  = (start_row / 8) * (4 * 4) / 2;
-            index_t start_offset = (start_row * 64) + start_col + warp_offset;
-
-            kv_tile.k_tile = load_tile(k_lds_window_load(k_lds_read_idx), start_offset);
+            kv_tile.k_tile = load_tile(k_lds_window_load(k_lds_read_idx), k_lds_load_offset);
         };
 
         auto V_mem_load = [&](auto v_lds_write_idx) {
@@ -712,13 +722,7 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
-            index_t group_idx     = get_lane_id() / 16;
-            index_t local_lane_id = get_lane_id() % 16;
-            index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
-            index_t start_col     = (group_idx % 2) * 16 + (local_lane_id % 4) * 4;
-            index_t start_offset  = (start_row * 64) + start_col;
-
-            kv_tile.v_tile = load_tile_transpose(v_lds_window_load(v_lds_read_idx), start_offset);
+            kv_tile.v_tile = load_tile_transpose(v_lds_window_load(v_lds_read_idx), v_lds_load_offset);
         };
 
         decltype(m) m_old;
