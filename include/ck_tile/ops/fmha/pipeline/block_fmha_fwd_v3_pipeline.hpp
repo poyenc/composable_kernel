@@ -51,7 +51,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
         {
             if constexpr(Phase == 0)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
@@ -60,14 +60,17 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             else if constexpr(Phase == 1)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
             else if constexpr(Phase == 2)
             {
 #if !CK_TILE_DISABLE_PACKED_FP32
                 __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
 #endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
                 });
@@ -75,7 +78,10 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             else if constexpr(Phase == 3)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
         }
         else
@@ -83,11 +89,14 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             if constexpr(Phase == 0)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
             else if constexpr(Phase == 1)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
@@ -96,14 +105,17 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             else if constexpr(Phase == 2)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
             else if constexpr(Phase == 3)
             {
 #if !CK_TILE_DISABLE_PACKED_FP32
                 __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
 #endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
                 });
@@ -125,7 +137,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
         {
             if constexpr(Phase == 0)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
@@ -134,14 +146,17 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             else if constexpr(Phase == 1)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
             else if constexpr(Phase == 2)
             {
 #if !CK_TILE_DISABLE_PACKED_FP32
                 __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
 #endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
                 });
@@ -149,7 +164,10 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             else if constexpr(Phase == 3)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
         }
         else
@@ -157,11 +175,14 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             if constexpr(Phase == 0)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
             else if constexpr(Phase == 1)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
@@ -170,14 +191,17 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             else if constexpr(Phase == 2)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
             }
             else if constexpr(Phase == 3)
             {
 #if !CK_TILE_DISABLE_PACKED_FP32
                 __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
 #endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
                 });
@@ -542,9 +566,9 @@ struct BlockFmhaFwdV3Pipeline
         });
 
         const index_t k_lds_load_offset = [] {
-            index_t start_row    = get_lane_id() % 32;
-            index_t start_col    = get_lane_id() / 32 * 8;
-            index_t warp_offset  = (start_row / 8) * (4 * 4) / 2;
+            index_t start_row   = get_lane_id() % 32;
+            index_t start_col   = get_lane_id() / 32 * 8;
+            index_t warp_offset = (start_row / 8) * (4 * 4) / 2;
             return (start_row * 64) + start_col + warp_offset;
         }();
 
@@ -722,7 +746,8 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
-            kv_tile.v_tile = load_tile_transpose(v_lds_window_load(v_lds_read_idx), v_lds_load_offset);
+            kv_tile.v_tile =
+                load_tile_transpose(v_lds_window_load(v_lds_read_idx), v_lds_load_offset);
         };
 
         decltype(m) m_old;
