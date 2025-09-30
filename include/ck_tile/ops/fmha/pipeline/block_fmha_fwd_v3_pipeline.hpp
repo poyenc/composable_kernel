@@ -468,8 +468,8 @@ struct BlockFmhaFwdV3Pipeline
         const auto f_max = [](auto e0, auto e1) { return max(e0, e1); };
         const auto f_sum = [](auto e0, auto e1) { return e0 + e1; };
 
-        using PartitionIndex    = sequence<0, 0>;
-        auto k_lds_window_store = generate_tuple(
+        using ReplacementPartitionIndex = sequence<0, 0>;
+        auto k_lds_window_store         = generate_tuple(
             [&](auto write_idx) {
                 auto k_buf = (write_idx == 0 ? smem_k0 : smem_k1);
                 return make_lds_tile_window(
@@ -490,7 +490,7 @@ struct BlockFmhaFwdV3Pipeline
                                          nullptr,
                                          Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
                                      Policy::template MakeKRegTileDistribution<Problem>(),
-                                     PartitionIndex{})),
+                                     ReplacementPartitionIndex{})),
                                  2>
             k_lds_window_load;
 
@@ -499,7 +499,7 @@ struct BlockFmhaFwdV3Pipeline
                                          nullptr,
                                          Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                      Policy::template MakeVRegTileDistribution<Problem>(),
-                                     PartitionIndex{})),
+                                     ReplacementPartitionIndex{})),
                                  2>
             v_lds_window_load;
 
@@ -548,7 +548,7 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeKRegTileDistribution<Problem>(),
-                                 PartitionIndex{});
+                                 ReplacementPartitionIndex{});
         });
 
         static_for<0, 2, 1>{}([&](auto idx) {
@@ -562,7 +562,7 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeVRegTileDistribution<Problem>(),
-                                 PartitionIndex{});
+                                 ReplacementPartitionIndex{});
         });
 
         const index_t k_lds_load_offset = [] {
