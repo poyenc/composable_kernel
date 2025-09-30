@@ -401,7 +401,8 @@ struct BlockFmhaFwdV3Pipeline
               typename PComputeElementFunction,
               typename OAccElementFunction>
     CK_TILE_DEVICE auto
-    operator()(const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
+    operator()(multi_index<2> partition_index,
+               const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
                const QElementFunction& q_element_func,
                const KDramBlockWindowTmp& __restrict__ k_dram_block_window_tmp, // N0*K0 tile
                [[maybe_unused]] const KElementFunction& k_element_func,
@@ -455,16 +456,15 @@ struct BlockFmhaFwdV3Pipeline
         [[maybe_unused]] auto m_lds_window =
             make_tile_window(m_lds, make_tuple(number<kM0>{}), {0});
 
-        const index_t warp_id       = get_warp_id();
+        const index_t warp_id       = partition_index[0];
         const index_t warp_group_id = warp_id / 4;
-        const index_t lane_id       = get_lane_id();
+        const index_t lane_id       = partition_index[1];
 
         // Block GEMM
         constexpr auto gemm_0 = Policy::template GetQKBlockGemm<Problem>();
         constexpr auto gemm_1 = Policy::template GetPVBlockGemm<Problem>();
 
-        const auto partition_index = multi_index<2>{warp_id, lane_id};
-        auto q_dram_window         = make_tile_window(q_dram_block_window_tmp,
+        auto q_dram_window = make_tile_window(q_dram_block_window_tmp,
                                               Policy::template MakeQRegTileDistribution<Problem>(),
                                               partition_index);
 
@@ -1305,7 +1305,8 @@ struct BlockFmhaFwdV3Pipeline
               typename VDramBlockWindowTmp,
               typename LSEDramBlockWindowTmp>
     CK_TILE_DEVICE auto
-    operator()(const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
+    operator()(multi_index<2> partition_index,
+               const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
                const KDramBlockWindowTmp& __restrict__ k_dram_block_window_tmp, // N0*K0 tile
                const VDramBlockWindowTmp& __restrict__ v_dram_block_window_tmp, // N1*K1 tile
                LSEDramBlockWindowTmp& __restrict__ lse_dram_block_window_tmp,   // M0*1 tile
@@ -1319,7 +1320,8 @@ struct BlockFmhaFwdV3Pipeline
     {
         using namespace ck_tile;
 
-        return operator()(q_dram_block_window_tmp,
+        return operator()(partition_index,
+                          q_dram_block_window_tmp,
                           identity{},
                           k_dram_block_window_tmp,
                           identity{},
