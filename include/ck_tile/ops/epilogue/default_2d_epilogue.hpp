@@ -184,7 +184,7 @@ struct Default2DEpilogue
                 }
                 else
                 {
-                    update_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    update_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile), partition_index);
                 }
             }
         };
