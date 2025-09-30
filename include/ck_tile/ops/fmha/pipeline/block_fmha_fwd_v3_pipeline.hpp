@@ -455,14 +455,18 @@ struct BlockFmhaFwdV3Pipeline
         [[maybe_unused]] auto m_lds_window =
             make_tile_window(m_lds, make_tuple(number<kM0>{}), {0});
 
-        const index_t warp_group_id = get_warp_id() / 4;
+        const index_t warp_id       = get_warp_id();
+        const index_t warp_group_id = warp_id / 4;
+        const index_t lane_id       = get_lane_id();
 
         // Block GEMM
         constexpr auto gemm_0 = Policy::template GetQKBlockGemm<Problem>();
         constexpr auto gemm_1 = Policy::template GetPVBlockGemm<Problem>();
 
-        auto q_dram_window = make_tile_window_linear(
-            q_dram_block_window_tmp, Policy::template MakeQRegTileDistribution<Problem>());
+        const auto partition_index = multi_index<2>{warp_id, lane_id};
+        auto q_dram_window         = make_tile_window(q_dram_block_window_tmp,
+                                              Policy::template MakeQRegTileDistribution<Problem>(),
+                                              partition_index);
 
         // reduction function for softmax
         const auto f_max = [](auto e0, auto e1) { return max(e0, e1); };
@@ -490,6 +494,7 @@ struct BlockFmhaFwdV3Pipeline
                                          nullptr,
                                          Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
                                      Policy::template MakeKRegTileDistribution<Problem>(),
+                                     partition_index,
                                      ReplacementPartitionIndex{})),
                                  2>
             k_lds_window_load;
@@ -499,6 +504,7 @@ struct BlockFmhaFwdV3Pipeline
                                          nullptr,
                                          Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                      Policy::template MakeVRegTileDistribution<Problem>(),
+                                     partition_index,
                                      ReplacementPartitionIndex{})),
                                  2>
             v_lds_window_load;
@@ -548,6 +554,7 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeKRegTileDistribution<Problem>(),
+                                 partition_index,
                                  ReplacementPartitionIndex{});
         });
 
@@ -562,19 +569,20 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeVRegTileDistribution<Problem>(),
+                                 partition_index,
                                  ReplacementPartitionIndex{});
         });
 
-        const index_t k_lds_load_offset = [] {
-            index_t start_row   = get_lane_id() % 32;
-            index_t start_col   = get_lane_id() / 32 * 8;
+        const index_t k_lds_load_offset = [&] {
+            index_t start_row   = lane_id % 32;
+            index_t start_col   = lane_id / 32 * 8;
             index_t warp_offset = (start_row / 8) * (4 * 4) / 2;
             return (start_row * 64) + start_col + warp_offset;
         }();
 
-        const index_t v_lds_load_offset = [] {
-            index_t group_idx     = get_lane_id() / 16;
-            index_t local_lane_id = get_lane_id() % 16;
+        const index_t v_lds_load_offset = [&] {
+            index_t group_idx     = lane_id / 16;
+            index_t local_lane_id = lane_id % 16;
             index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
             index_t start_col     = (group_idx % 2) * 16 + (local_lane_id % 4) * 4;
             return (start_row * 64) + start_col;
@@ -619,17 +627,17 @@ struct BlockFmhaFwdV3Pipeline
             }
         }
 
-        auto k_dram_window =
-            make_tile_window(k_dram_block_window_tmp.get_bottom_tensor_view(),
-                             k_dram_block_window_tmp.get_window_lengths(),
-                             {seqlen_k_start, 0},
-                             Policy::template MakeKDramTileDistribution<Problem>());
+        auto k_dram_window = make_tile_window(k_dram_block_window_tmp.get_bottom_tensor_view(),
+                                              k_dram_block_window_tmp.get_window_lengths(),
+                                              {seqlen_k_start, 0},
+                                              Policy::template MakeKDramTileDistribution<Problem>(),
+                                              partition_index);
 
-        auto v_dram_window =
-            make_tile_window(v_dram_block_window_tmp.get_bottom_tensor_view(),
-                             v_dram_block_window_tmp.get_window_lengths(),
-                             {seqlen_k_start, 0}, // TODO: hdim split?
-                             Policy::template MakeVDramTileDistribution<Problem>());
+        auto v_dram_window = make_tile_window(v_dram_block_window_tmp.get_bottom_tensor_view(),
+                                              v_dram_block_window_tmp.get_window_lengths(),
+                                              {seqlen_k_start, 0}, // TODO: hdim split?
+                                              Policy::template MakeVDramTileDistribution<Problem>(),
+                                              partition_index);
 
         // prefetch K tile
         index_t i_total_loops      = 0;
@@ -959,14 +967,15 @@ struct BlockFmhaFwdV3Pipeline
                     q_origin.at(number<0>{}), kv_token_start, number<kM0>{}, number<kN0>{});
                 if(need_perpixel_check)
                 {
-                    set_tile_if(sp(sp_reg_idx).sp_compute,
-                                -numeric<SMPLComputeDataType>::infinity(),
-                                [&](auto tile_idx) {
-                                    const auto row =
-                                        q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
-                                    const auto col = kv_token_start + tile_idx.at(number<1>{});
-                                    return mask.IsOutOfBound(row, col);
-                                });
+                    set_tile_if(
+                        sp(sp_reg_idx).sp_compute,
+                        -numeric<SMPLComputeDataType>::infinity(),
+                        [&](auto tile_idx) {
+                            const auto row = q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
+                            const auto col = kv_token_start + tile_idx.at(number<1>{});
+                            return mask.IsOutOfBound(row, col);
+                        },
+                        partition_index);
                 }
             }
         };
