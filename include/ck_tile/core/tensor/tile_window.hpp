@@ -219,14 +219,6 @@ struct tile_window_with_static_distribution
                              number<i_access_unsupport_>          = {},
                              bool_constant<oob_conditional_check> = {}) const
     {
-        if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
-                     address_space_enum::global)
-        {
-            __builtin_amdgcn_sched_barrier(0);
-            asm volatile("; [POYENC] start tile_window::load()");
-            __builtin_amdgcn_sched_barrier(0);
-        }
-
         using Traits   = typename Base::Traits;
         using vector_t = typename Traits::vector_t;
         using SFC_Ys   = typename Traits::SFC_Ys;
@@ -312,14 +304,6 @@ struct tile_window_with_static_distribution
                 }
             });
         });
-
-        if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
-                     address_space_enum::global)
-        {
-            __builtin_amdgcn_sched_barrier(0);
-            asm volatile("; [POYENC] end tile_window::load()");
-            __builtin_amdgcn_sched_barrier(0);
-        }
     }
 
     template <typename DstTile,
