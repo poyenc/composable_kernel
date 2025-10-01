@@ -606,27 +606,6 @@ struct BlockFmhaFwdV3Pipeline
         const auto num_total_loop = integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
         index_t kv_token_start    = seqlen_k_start;
 
-        // check early exit if no work to do
-        if constexpr(FmhaMask::IsMasking || kPadSeqLenK)
-        {
-            if(num_total_loop <= 0)
-            {
-                if constexpr(kStoreLSE)
-                {
-                    auto lse =
-                        make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
-
-                    set_tile(lse, -numeric<SMPLComputeDataType>::infinity());
-
-                    store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse));
-                }
-
-                // Note: here occ are all cleard, return it
-                // Note: q loaded but no fence, ignore it.
-                return o_acc;
-            }
-        }
-
         auto k_dram_window = make_tile_window(k_dram_block_window_tmp.get_bottom_tensor_view(),
                                               k_dram_block_window_tmp.get_window_lengths(),
                                               {seqlen_k_start, 0},
