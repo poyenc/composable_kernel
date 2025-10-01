@@ -18,6 +18,8 @@
 #include "ck_tile/core/utility/functional.hpp"
 #include "ck_tile/core/utility/type_traits.hpp"
 
+#define USE_WARP_COORD 1
+
 namespace ck_tile {
 
 /**
@@ -82,8 +84,21 @@ struct tile_window_with_static_distribution
         this->bottom_tensor_view_ = bottom_tensor_view;
         this->tile_dstr_          = tile_distribution;
 
-        pre_computed_coords_ =
-            prepare_coords(bottom_tensor_view, window_origin, tile_distribution, partition_index);
+        if constexpr(USE_WARP_COORD &&
+                     Base::BottomTensorView::buffer_view::get_address_space() ==
+                         address_space_enum::global &&
+                     std::is_same_v<sequence<-2, -2>, ReplacementPartitionIndex>)
+        {
+            typename Base::BottomTensorIndex dummy_origin{0, 0};
+            pre_computed_coords_ = prepare_coords(
+                bottom_tensor_view, dummy_origin, tile_distribution, partition_index);
+        }
+        else
+        {
+            pre_computed_coords_ = prepare_coords(
+                bottom_tensor_view, window_origin, tile_distribution, partition_index);
+        }
+
         if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
                      address_space_enum::global)
         {
@@ -92,6 +107,12 @@ struct tile_window_with_static_distribution
                                                        tile_distribution,
                                                        partition_index,
                                                        sequence<-1, 0>{});
+
+            pre_computed_warp_coords2_ = prepare_coords(bottom_tensor_view,
+                                                        window_origin,
+                                                        tile_distribution,
+                                                        partition_index,
+                                                        sequence<0, 0>{});
         }
     }
 
@@ -198,6 +219,14 @@ struct tile_window_with_static_distribution
                              number<i_access_unsupport_>          = {},
                              bool_constant<oob_conditional_check> = {}) const
     {
+        if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
+                     address_space_enum::global)
+        {
+            __builtin_amdgcn_sched_barrier(0);
+            asm volatile("; [POYENC] start tile_window::load()");
+            __builtin_amdgcn_sched_barrier(0);
+        }
+
         using Traits   = typename Base::Traits;
         using vector_t = typename Traits::vector_t;
         using SFC_Ys   = typename Traits::SFC_Ys;
@@ -213,13 +242,45 @@ struct tile_window_with_static_distribution
             static_for<0, NumAccessPerCoord, 1>{}([&](auto iCoordAccess) {
                 constexpr auto iAccess = number<iCoord * NumAccessPerCoord + iCoordAccess>{};
 
+#if 0
+                if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
+                             address_space_enum::global)
+                {
+                    if(blockIdx.y == 1 && get_warp_id() == 0 && get_lane_id() == 1)
+                    {
+                        printf("[POYENC] block id: %d, warp offset: %d, thread offset: %d\n",
+                               static_cast<int>(blockIdx.y),
+                               pre_computed_warp_coords2_[iCoord][I1].get_offset(),
+                               bottom_tensor_thread_coord.get_offset());
+                    }
+                }
+#endif
+
                 // data index [y0, y1, ...]
                 constexpr auto idx_ys_start = SFC_Ys::get_index(iAccess);
 
                 // read from bottom tensor
-                const vector_t vec_value =
-                    this->get_bottom_tensor_view().template get_vectorized_elements<vector_t>(
-                        bottom_tensor_thread_coord, offset, bool_constant<oob_conditional_check>{});
+                const vector_t vec_value = [&] {
+                    if constexpr(USE_WARP_COORD &&
+                                 Base::BottomTensorView::buffer_view::get_address_space() ==
+                                     address_space_enum::global &&
+                                 std::is_same_v<sequence<-2, -2>, ReplacementPartitionIndex>)
+                    {
+                        return this->get_bottom_tensor_view()
+                            .template get_vectorized_elements<vector_t>(
+                                bottom_tensor_thread_coord,
+                                pre_computed_warp_coords2_[iCoord][I1].get_offset(),
+                                bool_constant<oob_conditional_check>{});
+                    }
+                    else
+                    {
+                        return this->get_bottom_tensor_view()
+                            .template get_vectorized_elements<vector_t>(
+                                bottom_tensor_thread_coord,
+                                offset,
+                                bool_constant<oob_conditional_check>{});
+                    }
+                }();
                 // write into distributed tensor
                 static_for<0, Traits::ScalarPerVector, Traits::PackedSize>{}([&](auto j) {
                     constexpr auto idx_ys = generate_tuple(
@@ -251,6 +312,14 @@ struct tile_window_with_static_distribution
                 }
             });
         });
+
+        if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
+                     address_space_enum::global)
+        {
+            __builtin_amdgcn_sched_barrier(0);
+            asm volatile("; [POYENC] end tile_window::load()");
+            __builtin_amdgcn_sched_barrier(0);
+        }
     }
 
     template <typename DstTile,
@@ -838,11 +907,20 @@ struct tile_window_with_static_distribution
     // Custom move behavior
     CK_TILE_DEVICE void move_extended(const typename Base::BottomTensorIndex& step)
     {
-        static_for<0, NumCoord, 1>{}([&](auto iCoord) {
-            move_tensor_coordinate(this->bottom_tensor_view_.get_tensor_descriptor(),
-                                   pre_computed_coords_(iCoord)(I1),
-                                   step);
-        });
+        if constexpr(USE_WARP_COORD &&
+                     Base::BottomTensorView::buffer_view::get_address_space() ==
+                         address_space_enum::global &&
+                     std::is_same_v<sequence<-2, -2>, ReplacementPartitionIndex>)
+        {
+        }
+        else
+        {
+            static_for<0, NumCoord, 1>{}([&](auto iCoord) {
+                move_tensor_coordinate(this->bottom_tensor_view_.get_tensor_descriptor(),
+                                       pre_computed_coords_(iCoord)(I1),
+                                       step);
+            });
+        }
 
         if constexpr(Base::BottomTensorView::buffer_view::get_address_space() ==
                      address_space_enum::global)
@@ -850,6 +928,12 @@ struct tile_window_with_static_distribution
             static_for<0, NumCoord, 1>{}([&](auto iCoord) {
                 move_tensor_coordinate(this->bottom_tensor_view_.get_tensor_descriptor(),
                                        pre_computed_warp_coords_(iCoord)(I1),
+                                       step);
+            });
+
+            static_for<0, NumCoord, 1>{}([&](auto iCoord) {
+                move_tensor_coordinate(this->bottom_tensor_view_.get_tensor_descriptor(),
+                                       pre_computed_warp_coords2_(iCoord)(I1),
                                        step);
             });
         }
@@ -905,6 +989,11 @@ struct tile_window_with_static_distribution
         array<tuple<typename Base::WindowAdaptorCoord, typename Base::BottomTensorCoord>, NumCoord>,
         std::byte>
         pre_computed_warp_coords_;
+    std::conditional_t<
+        Base::BottomTensorView::buffer_view::get_address_space() == address_space_enum::global,
+        array<tuple<typename Base::WindowAdaptorCoord, typename Base::BottomTensorCoord>, NumCoord>,
+        std::byte>
+        pre_computed_warp_coords2_;
 };
 
 // TODO: use strategy

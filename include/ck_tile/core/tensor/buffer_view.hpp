@@ -293,6 +293,19 @@ struct buffer_view<address_space_enum::global,
                                       bool is_valid_element,
                                       bool_constant<oob_conditional_check> = {}) const
     {
+#if 0
+        if constexpr(get_address_space() == address_space_enum::global)
+        {
+            if(blockIdx.y == 1 && get_warp_id() == 0 && get_lane_id() == 1)
+            {
+                printf("[POYENC] block id: %d, linear_offset: %d, i: %d\n",
+                       static_cast<int>(blockIdx.y),
+                       linear_offset,
+                       i);
+            }
+        }
+#endif
+
         // X contains multiple T
         constexpr index_t scalar_per_t_vector = vector_traits<remove_cvref_t<T>>::vector_size;
 

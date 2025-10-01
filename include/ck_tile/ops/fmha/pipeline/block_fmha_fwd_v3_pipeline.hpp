@@ -466,7 +466,8 @@ struct BlockFmhaFwdV3Pipeline
 
         auto q_dram_window = make_tile_window(q_dram_block_window_tmp,
                                               Policy::template MakeQRegTileDistribution<Problem>(),
-                                              partition_index);
+                                              partition_index,
+                                              sequence<-2, -2>{});
 
         // reduction function for softmax
         const auto f_max = [](auto e0, auto e1) { return max(e0, e1); };
