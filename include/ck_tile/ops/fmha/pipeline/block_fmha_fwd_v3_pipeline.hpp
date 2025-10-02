@@ -72,7 +72,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
 #endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
             else if constexpr(Phase == 3)
@@ -117,7 +117,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
 #endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
         }
@@ -158,7 +158,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
 #endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
             else if constexpr(Phase == 3)
@@ -203,7 +203,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
 #endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
         }
@@ -533,7 +533,7 @@ struct BlockFmhaFwdV3Pipeline
 
         decltype(gemm_1.MakeCBlockTile()) o_acc;
         constexpr index_t fmha_alu_D_reg_cnt =
-            6; // Threshold for determining how many fmha_alu_D_upd() unpacked
+            2; // Threshold for determining how many fmha_alu_D_upd() unpacked
                // instructions to relocate to fmha_alu1().
         static_assert(fmha_alu_D_reg_cnt % 2 == 0 &&
                       fmha_alu_D_reg_cnt <= o_acc.thread_buf_.size());
@@ -900,23 +900,26 @@ struct BlockFmhaFwdV3Pipeline
             }
         };
 
-        auto fmha_alu_D_upd = [&] {
+#if CK_TILE_DISABLE_PACKED_FP32
+        constexpr index_t num_unpack_insts =
+            26; // Threshold for keeping some rescaling instructions unpacked
+                // to prevent SIMD idle and the resulting warm-up period.
+#endif
+        fp32x2_t pk_o_acc_scale;
+        auto fmha_alu_D_upd_unpack = [&] {
             o_acc_scale = ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
 
-            fp32x2_t pk_o_acc_scale;
-            pk_o_acc_scale.x = o_acc_scale;
-            pk_o_acc_scale.y = o_acc_scale;
-
 #if CK_TILE_DISABLE_PACKED_FP32
-            constexpr index_t num_unpack_insts =
-                2; // Threshold for keeping some rescaling instructions unpacked
-                   // to prevent SIMD idle and the resulting warm-up period.
             static_assert(num_unpack_insts % 2 == 0 &&
                           (fmha_alu_D_reg_cnt + num_unpack_insts) <= o_acc.thread_buf_.size());
             static_for<fmha_alu_D_reg_cnt, fmha_alu_D_reg_cnt + num_unpack_insts, 1>{}(
                 [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
 #endif
+            pk_o_acc_scale.x = o_acc_scale;
+            pk_o_acc_scale.y = o_acc_scale;
+        };
 
+        auto fmha_alu_D_upd_pack = [&] {
             constexpr index_t issued_unpack_insts =
 #if CK_TILE_DISABLE_PACKED_FP32
                 fmha_alu_D_reg_cnt + num_unpack_insts
@@ -937,6 +940,11 @@ struct BlockFmhaFwdV3Pipeline
                 o_acc.thread_buf_[idx]     = output.x;
                 o_acc.thread_buf_[idx + 1] = output.y;
             });
+        };
+
+        auto fmha_alu_D_upd = [&] {
+            fmha_alu_D_upd_unpack();
+            fmha_alu_D_upd_pack();
         };
 
         auto fmha_mask = [&](auto sp_reg_idx) {
@@ -1040,10 +1048,10 @@ struct BlockFmhaFwdV3Pipeline
                     asm volatile("s_nop 0");
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
-
+                    fmha_alu_D_upd_unpack();
                     Scheduler::schedule(cl_p, number<2>{});
                     __builtin_amdgcn_sched_barrier(0);
-                    fmha_alu_D_upd();
+                    fmha_alu_D_upd_pack();
 
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
@@ -1118,10 +1126,10 @@ struct BlockFmhaFwdV3Pipeline
                     asm volatile("s_nop 1");
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
-
+                    fmha_alu_D_upd_unpack();
                     Scheduler::schedule(cl_p, number<3>{});
                     __builtin_amdgcn_sched_barrier(0);
-                    fmha_alu_D_upd();
+                    fmha_alu_D_upd_pack();
                 }
                 return result;
             };
