@@ -61,6 +61,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 2)
             {
@@ -76,6 +77,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
         }
         else
@@ -87,6 +89,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 1)
             {
@@ -103,6 +106,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 3)
             {
@@ -141,6 +145,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 2)
             {
@@ -156,6 +161,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
         }
         else
@@ -167,6 +173,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 1)
             {
@@ -183,6 +190,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
                 __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
                 __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 3)
             {
