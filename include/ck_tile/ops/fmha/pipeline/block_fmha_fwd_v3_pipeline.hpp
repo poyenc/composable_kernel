@@ -885,7 +885,7 @@ struct BlockFmhaFwdV3Pipeline
         constexpr index_t num_unpack_insts =
             26; // Threshold for keeping some rescaling instructions unpacked
                 // to prevent SIMD idle and the resulting warm-up period.
-        fp32x2_t pk_o_acc_scale;
+
         auto fmha_alu_D_upd_unpack = [&] {
             o_acc_scale = ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
 
@@ -893,8 +893,6 @@ struct BlockFmhaFwdV3Pipeline
                           (fmha_alu_D_reg_cnt + num_unpack_insts) <= o_acc.thread_buf_.size());
             static_for<fmha_alu_D_reg_cnt, fmha_alu_D_reg_cnt + num_unpack_insts, 1>{}(
                 [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
-            pk_o_acc_scale.x = o_acc_scale;
-            pk_o_acc_scale.y = o_acc_scale;
         };
 
         auto fmha_alu_D_upd_pack = [&] {
@@ -902,16 +900,8 @@ struct BlockFmhaFwdV3Pipeline
             /// NOTICE: Use inline asm v_pk_mul_f32 to reduce latency. The fmha_alu_D_upd() call
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
-            static_for<issued_unpack_insts, o_acc.thread_buf_.size(), 2>{}([&](auto idx) {
-                fp32x2_t input;
-                input.x = o_acc.thread_buf_[idx];
-                input.y = o_acc.thread_buf_[idx + 1];
-
-                auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
-
-                o_acc.thread_buf_[idx]     = output.x;
-                o_acc.thread_buf_[idx + 1] = output.y;
-            });
+            static_for<issued_unpack_insts, o_acc.thread_buf_.size(), 2>{}(
+                [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
         };
 
         auto fmha_alu_D_upd = [&] {
