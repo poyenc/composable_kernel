@@ -18,9 +18,6 @@
 #endif
 
 #define ADD_SBARRIER_FOR_PHASE0 1
-#if !defined(CK_TILE_DISABLE_PACKED_FP32)
-#define CK_TILE_DISABLE_PACKED_FP32 0
-#endif
 
 #define WARP_ID 0
 #define LANE_ID 0
@@ -67,9 +64,6 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             }
             else if constexpr(Phase == 2)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
@@ -112,9 +106,6 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             }
             else if constexpr(Phase == 3)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
@@ -153,9 +144,6 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             }
             else if constexpr(Phase == 2)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
@@ -198,9 +186,6 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             }
             else if constexpr(Phase == 3)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
                 static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
                     __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
@@ -211,18 +196,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
 };
 
 namespace detail {
-CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c)
-{
-#if CK_TILE_DISABLE_PACKED_FP32
-    return a * b + c;
-#else
-    float result;
-    asm volatile("v_fma_f32 %[result], %[a], %[b], %[c]"
-                 : [result] "=v"(result)
-                 : [a] "v"(a), [b] "s"(b), [c] "v"(c));
-    return result;
-#endif
-}
+CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c) { return a * b + c; }
 
 CK_TILE_DEVICE float add_impl_vv(float lhs, float rhs)
 {
@@ -900,33 +874,23 @@ struct BlockFmhaFwdV3Pipeline
             }
         };
 
-#if CK_TILE_DISABLE_PACKED_FP32
         constexpr index_t num_unpack_insts =
             26; // Threshold for keeping some rescaling instructions unpacked
                 // to prevent SIMD idle and the resulting warm-up period.
-#endif
         fp32x2_t pk_o_acc_scale;
         auto fmha_alu_D_upd_unpack = [&] {
             o_acc_scale = ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
 
-#if CK_TILE_DISABLE_PACKED_FP32
             static_assert(num_unpack_insts % 2 == 0 &&
                           (fmha_alu_D_reg_cnt + num_unpack_insts) <= o_acc.thread_buf_.size());
             static_for<fmha_alu_D_reg_cnt, fmha_alu_D_reg_cnt + num_unpack_insts, 1>{}(
                 [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
-#endif
             pk_o_acc_scale.x = o_acc_scale;
             pk_o_acc_scale.y = o_acc_scale;
         };
 
         auto fmha_alu_D_upd_pack = [&] {
-            constexpr index_t issued_unpack_insts =
-#if CK_TILE_DISABLE_PACKED_FP32
-                fmha_alu_D_reg_cnt + num_unpack_insts
-#else
-                fmha_alu_D_reg_cnt
-#endif
-                ;
+            constexpr index_t issued_unpack_insts = fmha_alu_D_reg_cnt + num_unpack_insts;
             /// NOTICE: Use inline asm v_pk_mul_f32 to reduce latency. The fmha_alu_D_upd() call
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
