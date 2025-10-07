@@ -900,7 +900,7 @@ struct BlockFmhaFwdV3Pipeline
             /// NOTICE: Use inline asm v_pk_mul_f32 to reduce latency. The fmha_alu_D_upd() call
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
-            static_for<issued_unpack_insts, o_acc.thread_buf_.size(), 2>{}(
+            static_for<issued_unpack_insts, o_acc.thread_buf_.size(), 1>{}(
                 [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
         };
 
