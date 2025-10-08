@@ -213,6 +213,13 @@ if(HAS_GREEDY_REVERSE_LOCAL_ASSIGNMENT)
   )
 endif()
 
+check_cxx_compiler_flag("-mllvm --amdgpu-codegenprepare-break-large-phis=0" HAS_BREAK_LARGE_PHIS)
+if(HAS_BREAK_LARGE_PHIS)
+  list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
+    "SHELL: -mllvm --amdgpu-codegenprepare-break-large-phis=0"
+  )
+endif()
+
 target_compile_options(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS})
 target_compile_definitions(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_DEFINITIONS})
 # TODO: we have to turn off this global prop, otherwise the progress bar generated
