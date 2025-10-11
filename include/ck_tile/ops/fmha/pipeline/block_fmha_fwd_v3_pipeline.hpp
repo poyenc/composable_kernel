@@ -515,7 +515,7 @@ struct BlockFmhaFwdV3Pipeline
 
         decltype(gemm_1.MakeCBlockTile()) o_acc;
         constexpr index_t fmha_alu_D_reg_cnt =
-            2; // Threshold for determining how many fmha_alu_D_upd() unpacked
+            6; // Threshold for determining how many fmha_alu_D_upd() unpacked
                // instructions to relocate to fmha_alu1().
         static_assert(fmha_alu_D_reg_cnt % 2 == 0 &&
                       fmha_alu_D_reg_cnt <= o_acc.thread_buf_.size());
