@@ -969,10 +969,6 @@ struct BlockFmhaFwdV3Pipeline
 
                 if constexpr(cl_p == 0)
                 {
-#if ADD_SBARRIER_FOR_PHASE0
-                    __builtin_amdgcn_sched_barrier(0);
-                    __builtin_amdgcn_s_barrier();
-#endif
                     __builtin_amdgcn_sched_barrier(0);
                     // phase0
                     if constexpr(pi == 0)
@@ -985,6 +981,15 @@ struct BlockFmhaFwdV3Pipeline
                     }
                     s_waitcnt_lgkmcnt<0>();
                     __builtin_amdgcn_sched_barrier(0);
+#if ADD_SBARRIER_FOR_PHASE0
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+#endif
+                    if constexpr(pi == 1)
+                    {
+                        asm volatile("s_nop 1");
+                        __builtin_amdgcn_sched_barrier(0);
+                    }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
 
