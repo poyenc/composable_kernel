@@ -220,6 +220,13 @@ if(HAS_BREAK_LARGE_PHIS)
   )
 endif()
 
+check_cxx_compiler_flag("-mllvm --amdgpu-packedfp32-are-2valu" HAS_PACKEDFP32_ARE_2VALU)
+if(HAS_PACKEDFP32_ARE_2VALU)
+  list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
+    "SHELL: -mllvm --amdgpu-packedfp32-are-2valu"
+  )
+endif()
+
 target_compile_options(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS})
 target_compile_definitions(${EXAMPLE_FMHA_FWD_V3} PRIVATE ${EXAMPLE_FMHA_FWD_V3_COMPILE_DEFINITIONS})
 # TODO: we have to turn off this global prop, otherwise the progress bar generated
