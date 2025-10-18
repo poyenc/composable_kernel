@@ -206,6 +206,11 @@ list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
 )
 set(EXAMPLE_FMHA_FWD_V3_COMPILE_DEFINITIONS)
 
+# remove unwanted options for fmha_fwd_v3(): -mllvm -enable-post-misched=0
+get_target_property(CURRENT_FMHA_FWD_V3_OPTIONS ${EXAMPLE_FMHA_FWD_V3} COMPILE_OPTIONS)
+list(REMOVE_ITEM CURRENT_FMHA_FWD_V3_OPTIONS "SHELL: -mllvm -enable-post-misched=0")
+set_target_properties(${EXAMPLE_FMHA_FWD_V3} PROPERTIES COMPILE_OPTIONS "${CURRENT_FMHA_FWD_V3_OPTIONS}")
+
 check_cxx_compiler_flag("-mllvm --greedy-reverse-local-assignment" HAS_GREEDY_REVERSE_LOCAL_ASSIGNMENT)
 if(HAS_GREEDY_REVERSE_LOCAL_ASSIGNMENT)
   list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
