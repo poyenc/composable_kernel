@@ -48,11 +48,16 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
         {
             if constexpr(Phase == 0)
             {
-                static_for<0, 16, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 1)
             {
@@ -93,11 +98,16 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             }
             else if constexpr(Phase == 1)
             {
-                static_for<0, 16, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 2)
             {
@@ -132,11 +142,16 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
         {
             if constexpr(Phase == 0)
             {
-                static_for<0, 16, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 1)
             {
@@ -177,11 +192,16 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             }
             else if constexpr(Phase == 1)
             {
-                static_for<0, 16, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 2)
             {
