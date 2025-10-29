@@ -84,7 +84,7 @@ struct Default2DEpilogue
     static constexpr memory_operation_enum MemoryOperation = Problem::MemoryOperation;
 
     CK_TILE_HOST_DEVICE static constexpr index_t GetSmemSize() { return 0; }
-#if 0
+
     // TODO: this function assume store out vector size is the same as OAccTile last dimension size
     //       how do we fix this ?
     template <typename ODramWindowTmp, typename OAccTile, typename DsDramWindows>
@@ -93,13 +93,27 @@ struct Default2DEpilogue
                                    const DsDramWindows& ds_dram_windows,
                                    void* = nullptr) const
     {
+        constexpr bool is_partition_index =
+            std::is_convertible_v<decltype(ds_dram_windows),
+                                  decltype(detail::get_partition_index(
+                                      o_acc_tile.get_tile_distribution()))>;
+
         const auto storeOrUpdateTile = [&](const auto& o_tile) {
             // TODO: this is ugly
             if constexpr(UseRawStore && (kPadM || kPadN))
             {
                 if constexpr(MemoryOperation == memory_operation_enum::set)
                 {
-                    store_tile_raw(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    if constexpr(is_partition_index)
+                    {
+                        store_tile_raw(o_dram_window_tmp,
+                                       cast_tile<ODataType>(o_tile),
+                                       /*partition_index=*/ds_dram_windows);
+                    }
+                    else
+                    {
+                        store_tile_raw(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    }
                 }
                 else
                 {
@@ -111,16 +125,35 @@ struct Default2DEpilogue
             {
                 if constexpr(MemoryOperation == memory_operation_enum::set)
                 {
-                    store_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    if constexpr(is_partition_index)
+                    {
+                        store_tile(o_dram_window_tmp,
+                                   cast_tile<ODataType>(o_tile),
+                                   /*partition_index=*/ds_dram_windows);
+                    }
+                    else
+                    {
+                        store_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    }
                 }
                 else
                 {
-                    update_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    if constexpr(is_partition_index)
+                    {
+                        update_tile(o_dram_window_tmp,
+                                    cast_tile<ODataType>(o_tile),
+                                    /*partition_index=*/ds_dram_windows);
+                    }
+                    else
+                    {
+                        update_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
+                    }
                 }
             }
         };
 
-        if constexpr(!std::is_same_v<DsDramWindows, std::nullptr_t> && Problem::NumDTensor >= 1)
+        if constexpr(!std::is_same_v<DsDramWindows, std::nullptr_t> && !is_partition_index &&
+                     Problem::NumDTensor >= 1)
         {
             using elementwise_result_t = decltype(load_tile(
                 make_tile_window(ds_dram_windows[number<0>{}].get_bottom_tensor_view(),
@@ -151,44 +184,6 @@ struct Default2DEpilogue
         {
             storeOrUpdateTile(o_acc_tile);
         }
-    }
-#endif
-    // TODO: this function assume store out vector size is the same as OAccTile last dimension size
-    //       how do we fix this ?
-    template <typename ODramWindowTmp, typename OAccTile>
-    CK_TILE_DEVICE auto operator()(ODramWindowTmp& o_dram_window_tmp,
-                                   const OAccTile& o_acc_tile,
-                                   decltype(detail::get_partition_index(
-                                       o_acc_tile.get_tile_distribution())) partition_index) const
-    {
-        const auto storeOrUpdateTile = [&](const auto& o_tile) {
-            // TODO: this is ugly
-            if constexpr(UseRawStore && (kPadM || kPadN))
-            {
-                if constexpr(MemoryOperation == memory_operation_enum::set)
-                {
-                    store_tile_raw(
-                        o_dram_window_tmp, cast_tile<ODataType>(o_tile), partition_index);
-                }
-                else
-                {
-                    update_tile_raw(o_dram_window_tmp, cast_tile<ODataType>(o_tile));
-                }
-                buffer_store_fence();
-            }
-            else
-            {
-                if constexpr(MemoryOperation == memory_operation_enum::set)
-                {
-                    store_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile), partition_index);
-                }
-                else
-                {
-                    update_tile(o_dram_window_tmp, cast_tile<ODataType>(o_tile), partition_index);
-                }
-            }
-        };
-        storeOrUpdateTile(o_acc_tile);
     }
 };
 
