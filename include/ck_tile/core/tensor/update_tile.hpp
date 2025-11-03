@@ -42,10 +42,10 @@ template <typename BottomTensorView_,
           typename WindowLengths_,
           typename TileDistribution_,
           typename DataType_>
-CK_TILE_DEVICE void update_tile(
-    tile_window_with_static_lengths<BottomTensorView_, WindowLengths_>& tile_window_tmp,
-    const static_distributed_tensor<DataType_, TileDistribution_>& dstr_tensor,
-    decltype(detail::get_partition_index(dstr_tensor.get_tile_distribution())) partition_index)
+CK_TILE_DEVICE void
+update_tile(tile_window_with_static_lengths<BottomTensorView_, WindowLengths_>& tile_window_tmp,
+            const static_distributed_tensor<DataType_, TileDistribution_>& dstr_tensor,
+            decltype(get_partition_index(dstr_tensor.get_tile_distribution())) partition_index)
 {
     using DataType = remove_cvref_t<typename BottomTensorView_::DataType>;
     using TileDstr = remove_cvref_t<TileDistribution_>;
