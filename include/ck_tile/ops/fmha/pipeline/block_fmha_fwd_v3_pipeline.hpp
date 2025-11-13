@@ -4,7 +4,6 @@
 #pragma once
 
 #include "ck_tile/core.hpp"
-#include "ck_tile/ops/fmha/block/block_attention_bias_enum.hpp"
 #include "ck_tile/ops/fmha/pipeline/block_fmha_fwd_v3_pipeline_default_policy.hpp"
 #include "ck_tile/ops/reduce/block/block_reduce.hpp"
 
@@ -19,9 +18,6 @@
 #endif
 
 #define ADD_SBARRIER_FOR_PHASE0 1
-#if !defined(CK_TILE_DISABLE_PACKED_FP32)
-#define CK_TILE_DISABLE_PACKED_FP32 0
-#endif
 
 #define WARP_ID 0
 #define LANE_ID 0
@@ -52,31 +48,41 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
         {
             if constexpr(Phase == 0)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 1)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 2)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
             else if constexpr(Phase == 3)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
         }
         else
@@ -84,29 +90,39 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
             if constexpr(Phase == 0)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 1)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 2)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 3)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
         }
@@ -126,31 +142,41 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
         {
             if constexpr(Phase == 0)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 1)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 2)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
             else if constexpr(Phase == 3)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
         }
         else
@@ -158,29 +184,39 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
             if constexpr(Phase == 0)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 1)
             {
-                static_for<0, 8, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
+                static_for<0, 14, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
+                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
                     __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
                 });
+                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
+                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
             }
             else if constexpr(Phase == 2)
             {
                 __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
+                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
+                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
             }
             else if constexpr(Phase == 3)
             {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
+                static_for<0, 16, 1>{}([&](auto) {
                     __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
+                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
                 });
             }
         }
@@ -188,18 +224,7 @@ struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
 };
 
 namespace detail {
-CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c)
-{
-#if CK_TILE_DISABLE_PACKED_FP32
-    return a * b + c;
-#else
-    float result;
-    asm volatile("v_fma_f32 %[result], %[a], %[b], %[c]"
-                 : [result] "=v"(result)
-                 : [a] "v"(a), [b] "s"(b), [c] "v"(c));
-    return result;
-#endif
-}
+CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c) { return a * b + c; }
 
 CK_TILE_DEVICE float add_impl_vv(float lhs, float rhs)
 {
@@ -262,15 +287,11 @@ struct BlockFmhaFwdV3Pipeline
     using OaccDataType        = ck_tile::remove_cvref_t<typename Problem::OaccDataType>;
     using ODataType           = ck_tile::remove_cvref_t<typename Problem::ODataType>;
     using FmhaMask            = ck_tile::remove_cvref_t<typename Problem::FmhaMask>;
-    static_assert(is_generic_attention_mask_v<FmhaMask>);
 
     static_assert(std::is_same_v<SaccDataType, SMPLComputeDataType>,
                   "we will the same dist tensor 'sp_compute' for both gemm0 & softmax");
 
     using BlockFmhaShape = ck_tile::remove_cvref_t<typename Problem::BlockFmhaShape>;
-
-    using VLayout = remove_cvref_t<typename BlockFmhaShape::VLayout>;
-    static_assert(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>);
 
     static constexpr ck_tile::index_t kBlockSize = Problem::kBlockSize;
 
@@ -282,22 +303,14 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr ck_tile::index_t kQKHeaddim    = BlockFmhaShape::kQKHeaddim;
     static constexpr ck_tile::index_t kSubQKHeaddim = BlockFmhaShape::kSubQKHeaddim;
 
-    static_assert(kQKHeaddim == 128 && kSubQKHeaddim == 128, "only supports hdim=hdim_v=128");
+    static_assert(kSubQKHeaddim <= 256, "hdim bigger than 256 is not suitable for this pipeline!");
 
-    static constexpr bool kIsGroupMode      = Problem::kIsGroupMode;
-    static constexpr bool kPadSeqLenQ       = Problem::kPadSeqLenQ;
-    static constexpr bool kPadSeqLenK       = Problem::kPadSeqLenK;
-    static constexpr bool kPadHeadDimQ      = Problem::kPadHeadDimQ;
-    static constexpr bool kPadHeadDimV      = Problem::kPadHeadDimV;
-    static constexpr bool kHasLogitsSoftCap = Problem::kHasLogitsSoftCap;
-    static constexpr auto BiasEnum          = Problem::BiasEnum;
-    static constexpr bool kStoreLSE         = Problem::kStoreLSE;
-    static constexpr bool kHasDropout       = Problem::kHasDropout;
-    static constexpr bool kDoFp8StaticQuant = Problem::kDoFp8StaticQuant;
-    static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((!kHasLogitsSoftCap && BiasEnum == BlockAttentionBiasEnum::NO_BIAS &&
-                   !kStoreLSE && !kHasDropout && !kDoFp8StaticQuant && !kSkipMinSeqlenQ),
-                  "enable unsupported features");
+    static constexpr bool kIsGroupMode = Problem::kIsGroupMode;
+    static constexpr bool kPadSeqLenQ  = Problem::kPadSeqLenQ;
+    static constexpr bool kPadSeqLenK  = Problem::kPadSeqLenK;
+    static constexpr bool kPadHeadDimQ = Problem::kPadHeadDimQ;
+    static constexpr bool kPadHeadDimV = Problem::kPadHeadDimV;
+    static constexpr bool kStoreLSE    = Problem::kStoreLSE;
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -319,14 +332,6 @@ struct BlockFmhaFwdV3Pipeline
             return 2;
         }
     }();
-
-    CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
-    {
-        // create another LDS buffer for p
-        return ck_tile::max(kM0 * kN1 * sizeof(PDataType),
-                            Policy::template GetSmemSize<Problem>() +
-                                kM0 * kN0 * sizeof(PDataType));
-    }
 
     // for debug only
     template <ck_tile::index_t MPerBlock, ck_tile::index_t NPerBlock>
@@ -354,12 +359,12 @@ struct BlockFmhaFwdV3Pipeline
     }
 
     template <typename DataType, typename Descriptor>
-    CK_TILE_DEVICE static constexpr auto make_lds_tile_window(void* base, const Descriptor& desc)
+    CK_TILE_DEVICE static constexpr auto make_lds_tile_window(DataType* __restrict__ base,
+                                                              const Descriptor& desc)
     {
         using namespace ck_tile;
 
-        auto tensor_view =
-            make_tensor_view<address_space_enum::lds>(reinterpret_cast<DataType*>(base), desc);
+        auto tensor_view = make_tensor_view<address_space_enum::lds>(base, desc);
         return make_tile_window(tensor_view, desc.get_lengths(), {0, 0});
     }
 
@@ -397,20 +402,26 @@ struct BlockFmhaFwdV3Pipeline
               typename SAccElementFunction,
               typename PComputeElementFunction,
               typename OAccElementFunction>
-    CK_TILE_DEVICE auto operator()(const QDramBlockWindowTmp& q_dram_block_window_tmp, // M0*K0 tile
-                                   const QElementFunction& q_element_func,
-                                   const KDramBlockWindowTmp& k_dram_block_window_tmp, // N0*K0 tile
-                                   [[maybe_unused]] const KElementFunction& k_element_func,
-                                   const VDramBlockWindowTmp& v_dram_block_window_tmp, // N1*K1 tile
-                                   [[maybe_unused]] const VElementFunction& v_element_func,
-                                   LSEDramBlockWindowTmp& lse_dram_window_tmp, // M0*1 tile
-                                   const LSEElementFunction& lse_element_func,
-                                   [[maybe_unused]] const SAccElementFunction& s_acc_element_func,
-                                   const PComputeElementFunction& p_compute_element_func,
-                                   const OAccElementFunction& o_acc_element_func,
-                                   FmhaMask mask,
-                                   float scale_s,
-                                   void* smem_ptr) const
+    CK_TILE_DEVICE auto
+    operator()(multi_index<2> partition_index,
+               const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
+               const QElementFunction& q_element_func,
+               const KDramBlockWindowTmp& __restrict__ k_dram_block_window_tmp, // N0*K0 tile
+               [[maybe_unused]] const KElementFunction& k_element_func,
+               const VDramBlockWindowTmp& __restrict__ v_dram_block_window_tmp, // N1*K1 tile
+               [[maybe_unused]] const VElementFunction& v_element_func,
+               LSEDramBlockWindowTmp& __restrict__ lse_dram_window_tmp, // M0*1 tile
+               const LSEElementFunction& lse_element_func,
+               [[maybe_unused]] const SAccElementFunction& s_acc_element_func,
+               const PComputeElementFunction& p_compute_element_func,
+               const OAccElementFunction& o_acc_element_func,
+               FmhaMask mask,
+               float scale_s,
+               KDataType* __restrict__ smem_k0,
+               KDataType* __restrict__ smem_k1,
+               VDataType* __restrict__ smem_v0,
+               VDataType* __restrict__ smem_v1,
+               void* __restrict__ smem_ptr) const
     {
         using namespace ck_tile;
 
@@ -427,65 +438,65 @@ struct BlockFmhaFwdV3Pipeline
                           kN1 == VDramBlockWindowTmp{}.get_window_lengths()[number<1>{}],
                       "wrong!");
 
-        static_assert(sizeof(SaccDataType) * kM0 * kN0 <= GetSmemSize());
         auto s_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<SaccDataType*>(static_cast<char*>(smem_ptr)),
-            MakeSimpleLdsDesc<kM0, kN0>());
+            static_cast<SaccDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN0>());
         [[maybe_unused]] auto s_lds_window =
             make_tile_window(s_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
 
         auto p_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<PDataType*>(static_cast<char*>(smem_ptr) +
-                                         Policy::template GetSmemSize<Problem>()),
-            MakeSimpleLdsDesc<kM0, kN0>());
+            static_cast<PDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN0>());
         [[maybe_unused]] auto p_lds_window =
             make_tile_window(p_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
 
         auto o_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<PDataType*>(static_cast<char*>(smem_ptr)),
-            MakeSimpleLdsDesc<kM0, kN1>());
+            static_cast<PDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN1>());
         [[maybe_unused]] auto o_lds_window =
             make_tile_window(o_lds, make_tuple(number<kM0>{}, number<kN1>{}), {0, 0});
 
         auto m_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<SMPLComputeDataType*>(static_cast<char*>(smem_ptr) +
-                                                   Policy::template GetSmemSize<Problem>()),
-            MakeSimpleLdsDesc1D<kM0>());
+            static_cast<SMPLComputeDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc1D<kM0>());
         [[maybe_unused]] auto m_lds_window =
             make_tile_window(m_lds, make_tuple(number<kM0>{}), {0});
 
-        const index_t warp_group_id = get_warp_id() / 4;
+        const index_t warp_id       = partition_index[0];
+        const index_t warp_group_id = warp_id / 4;
+        const index_t lane_id       = partition_index[1];
 
         // Block GEMM
         constexpr auto gemm_0 = Policy::template GetQKBlockGemm<Problem>();
         constexpr auto gemm_1 = Policy::template GetPVBlockGemm<Problem>();
 
-        auto q_dram_window = make_tile_window_linear(
-            q_dram_block_window_tmp, Policy::template MakeQRegTileDistribution<Problem>());
+        auto q_dram_window = make_tile_window(q_dram_block_window_tmp,
+                                              Policy::template MakeQRegTileDistribution<Problem>(),
+                                              partition_index);
 
         // reduction function for softmax
         const auto f_max = [](auto e0, auto e1) { return max(e0, e1); };
         const auto f_sum = [](auto e0, auto e1) { return e0 + e1; };
 
         auto k_lds_window_store = generate_tuple(
-            [&](auto i_buf) {
-                return make_lds_tile_window<KDataType>(
-                    smem_ptr, Policy::template MakeKLdsStoreBlockDescriptor<Problem>(i_buf));
+            [&](auto write_idx) {
+                auto k_buf = (write_idx == 0 ? smem_k0 : smem_k1);
+                return make_lds_tile_window(
+                    k_buf, Policy::template MakeKLdsStoreBlockDescriptor<Problem>());
             },
             number<2>{});
 
         auto v_lds_window_store = generate_tuple(
-            [&](auto i_buf) {
-                return make_lds_tile_window<KDataType>(
-                    smem_ptr, Policy::template MakeVLdsStoreBlockDescriptor<Problem>(i_buf));
+            [&](auto write_idx) {
+                auto v_buf = (write_idx == 0 ? smem_v0 : smem_v1);
+                return make_lds_tile_window(
+                    v_buf, Policy::template MakeVLdsStoreBlockDescriptor<Problem>());
             },
             number<2>{});
 
+        constexpr auto all_zeros_partition_index = make_multi_index(0, 0);
         statically_indexed_array<decltype(make_tile_window(
                                      make_lds_tile_window<KDataType>(
                                          nullptr,
                                          Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
-                                     Policy::template MakeKRegTileDistribution<Problem>())),
+                                     Policy::template MakeKRegTileDistribution<Problem>(),
+                                     all_zeros_partition_index)),
                                  2>
             k_lds_window_load;
 
@@ -493,7 +504,8 @@ struct BlockFmhaFwdV3Pipeline
                                      make_lds_tile_window<VDataType>(
                                          nullptr,
                                          Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
-                                     Policy::template MakeVRegTileDistribution<Problem>())),
+                                     Policy::template MakeVRegTileDistribution<Problem>(),
+                                     all_zeros_partition_index)),
                                  2>
             v_lds_window_load;
 
@@ -520,9 +532,11 @@ struct BlockFmhaFwdV3Pipeline
         statically_indexed_array<sp_compute_type, 2> sp;
 
         decltype(gemm_1.MakeCBlockTile()) o_acc;
-        constexpr index_t fmha_alu_D_reg_cnt = 6; // threshold to decide how many fmha_alu_D_upd()
-                                                  // instructions should we move to fmha_alu1()
-        static_assert(fmha_alu_D_reg_cnt <= o_acc.thread_buf_.size());
+        constexpr index_t fmha_alu_D_reg_cnt =
+            6; // Threshold for determining how many fmha_alu_D_upd() unpacked
+               // instructions to relocate to fmha_alu1().
+        static_assert(fmha_alu_D_reg_cnt % 2 == 0 &&
+                      fmha_alu_D_reg_cnt <= o_acc.thread_buf_.size());
 
         decltype(block_tile_reduce<SMPLComputeDataType>(
             sp(number<0>{}).sp_compute, sequence<1>{}, f_max, SMPLComputeDataType{0})) m;
@@ -530,21 +544,47 @@ struct BlockFmhaFwdV3Pipeline
 
         // initialize k_lds_window and v_lds_window
         static_for<0, 2, 1>{}([&](auto idx) {
-            k_lds_window_load(idx) = make_tile_window(
-                make_lds_tile_window<KDataType>(
-                    static_cast<char*>(smem_ptr) + (idx)*Policy::template GetSmemSizeKV<Problem>(),
-                    Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
-                Policy::template MakeKRegTileDistribution<Problem>());
+            k_lds_window_load(idx) =
+                make_tile_window(make_lds_tile_window(
+                                     [&] {
+                                         if constexpr(idx == 0)
+                                             return smem_k0;
+                                         else
+                                             return smem_k1;
+                                     }(),
+                                     Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
+                                 Policy::template MakeKRegTileDistribution<Problem>(),
+                                 all_zeros_partition_index);
         });
 
         static_for<0, 2, 1>{}([&](auto idx) {
             v_lds_window_load(idx) =
-                make_tile_window(make_lds_tile_window<VDataType>(
-                                     static_cast<char*>(smem_ptr) +
-                                         (idx + 2) * Policy::template GetSmemSizeKV<Problem>(),
+                make_tile_window(make_lds_tile_window(
+                                     [&] {
+                                         if constexpr(idx == 0)
+                                             return smem_v0;
+                                         else
+                                             return smem_v1;
+                                     }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
-                                 Policy::template MakeVRegTileDistribution<Problem>());
+                                 Policy::template MakeVRegTileDistribution<Problem>(),
+                                 all_zeros_partition_index);
         });
+
+        const index_t k_lds_load_offset = [&] {
+            index_t start_row   = lane_id % 32;
+            index_t start_col   = lane_id / 32 * 8;
+            index_t warp_offset = (start_row / 8) * (4 * 4) / 2;
+            return (start_row * 64) + start_col + warp_offset;
+        }();
+
+        const index_t v_lds_load_offset = [&] {
+            index_t group_idx     = lane_id / 16;
+            index_t local_lane_id = lane_id % 16;
+            index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
+            index_t start_col     = (group_idx % 2) * 16 + (local_lane_id % 4) * 4;
+            return (start_row * 64) + start_col;
+        }();
 
         {
             auto origin_q      = load_tile(q_dram_window);
@@ -564,40 +604,17 @@ struct BlockFmhaFwdV3Pipeline
         const auto num_total_loop = integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
         index_t kv_token_start    = seqlen_k_start;
 
-        // check early exit if no work to do
-        if constexpr(FmhaMask::IsMasking || kPadSeqLenK)
-        {
-            if(num_total_loop <= 0)
-            {
-                if constexpr(kStoreLSE)
-                {
-                    auto lse =
-                        make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
+        auto k_dram_window = make_tile_window(k_dram_block_window_tmp.get_bottom_tensor_view(),
+                                              k_dram_block_window_tmp.get_window_lengths(),
+                                              {seqlen_k_start, 0},
+                                              Policy::template MakeKDramTileDistribution<Problem>(),
+                                              partition_index);
 
-                    set_tile(lse, -numeric<SMPLComputeDataType>::infinity());
-
-                    store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse));
-                }
-
-                // Note: here occ are all cleard, return it
-                // Note: q loaded but no fence, ignore it.
-                return o_acc;
-            }
-        }
-
-        auto k_dram_window =
-            make_tile_window(k_dram_block_window_tmp.get_bottom_tensor_view(),
-                             k_dram_block_window_tmp.get_window_lengths(),
-                             {seqlen_k_start, 0},
-                             Policy::template MakeKDramTileDistribution<Problem>());
-        k_dram_window.init_raw();
-
-        auto v_dram_window =
-            make_tile_window(v_dram_block_window_tmp.get_bottom_tensor_view(),
-                             v_dram_block_window_tmp.get_window_lengths(),
-                             {seqlen_k_start, 0}, // TODO: hdim split?
-                             Policy::template MakeVDramTileDistribution<Problem>());
-        v_dram_window.init_raw();
+        auto v_dram_window = make_tile_window(v_dram_block_window_tmp.get_bottom_tensor_view(),
+                                              v_dram_block_window_tmp.get_window_lengths(),
+                                              {seqlen_k_start, 0}, // TODO: hdim split?
+                                              Policy::template MakeVDramTileDistribution<Problem>(),
+                                              partition_index);
 
         // prefetch K tile
         index_t i_total_loops      = 0;
@@ -689,7 +706,10 @@ struct BlockFmhaFwdV3Pipeline
         constexpr int V_mem_su_ld_insts = v_dram_window.get_num_of_access();
 
         auto K_mem_load = [&](auto k_lds_write_idx) {
-            async_load_tile_raw(k_lds_window_store(k_lds_write_idx), k_dram_window);
+            async_load_tile(k_lds_window_store(k_lds_write_idx),
+                            k_dram_window,
+                            number<-1>{},
+                            bool_constant<false>{});
 
             /// FIXME: use the future-predicting method to move the window
             // move K tile windows
@@ -697,18 +717,23 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto K_lds_load = [&](auto k_lds_read_idx) {
-            kv_tile.k_tile = load_tile(k_lds_window_load(k_lds_read_idx));
+            kv_tile.k_tile =
+                load_tile_with_offset(k_lds_window_load(k_lds_read_idx), k_lds_load_offset);
         };
 
         auto V_mem_load = [&](auto v_lds_write_idx) {
-            async_load_tile_raw(v_lds_window_store(v_lds_write_idx), v_dram_window);
+            async_load_tile(v_lds_window_store(v_lds_write_idx),
+                            v_dram_window,
+                            number<-1>{},
+                            bool_constant<false>{});
 
             /// FIXME: use the future-predicting method to move the window
             move_tile_window(v_dram_window, {kK1, 0});
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
-            kv_tile.v_tile = load_tile_transpose(v_lds_window_load(v_lds_read_idx));
+            kv_tile.v_tile = load_tile_transpose_with_offset(v_lds_window_load(v_lds_read_idx),
+                                                             v_lds_load_offset);
         };
 
         decltype(m) m_old;
@@ -874,31 +899,27 @@ struct BlockFmhaFwdV3Pipeline
             }
         };
 
-        auto fmha_alu_D_upd = [&] {
+        constexpr index_t num_unpack_insts =
+            26; // Threshold for keeping some rescaling instructions unpacked
+                // to prevent SIMD idle and the resulting warm-up period.
+        fp32x2_t pk_o_acc_scale;
+        auto fmha_alu_D_upd_unpack = [&] {
             o_acc_scale = ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
 
-            fp32x2_t pk_o_acc_scale;
+            static_assert(num_unpack_insts % 2 == 0 &&
+                          (fmha_alu_D_reg_cnt + num_unpack_insts) <= o_acc.thread_buf_.size());
+            static_for<fmha_alu_D_reg_cnt, fmha_alu_D_reg_cnt + num_unpack_insts, 1>{}(
+                [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
             pk_o_acc_scale.x = o_acc_scale;
             pk_o_acc_scale.y = o_acc_scale;
+        };
 
-            static_assert((o_acc.thread_buf_.size() - fmha_alu_D_reg_cnt) % 2 == 0);
-#if CK_TILE_DISABLE_PACKED_FP32
-            static_assert(fmha_alu_D_reg_cnt + 2 <= o_acc.thread_buf_.size());
-            static_for<fmha_alu_D_reg_cnt, fmha_alu_D_reg_cnt + 2, 1>{}(
-                [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
-#endif
-
-            constexpr auto issued_D_reg_cnt =
-#if CK_TILE_DISABLE_PACKED_FP32
-                fmha_alu_D_reg_cnt + 2
-#else
-                fmha_alu_D_reg_cnt
-#endif
-                ;
+        auto fmha_alu_D_upd_pack = [&] {
+            constexpr index_t issued_unpack_insts = fmha_alu_D_reg_cnt + num_unpack_insts;
             /// NOTICE: Use inline asm v_pk_mul_f32 to reduce latency. The fmha_alu_D_upd() call
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
-            static_for<issued_D_reg_cnt, o_acc.thread_buf_.size(), 2>{}([&](auto idx) {
+            static_for<issued_unpack_insts, o_acc.thread_buf_.size(), 2>{}([&](auto idx) {
                 fp32x2_t input;
                 input.x = o_acc.thread_buf_[idx];
                 input.y = o_acc.thread_buf_[idx + 1];
@@ -910,6 +931,11 @@ struct BlockFmhaFwdV3Pipeline
             });
         };
 
+        auto fmha_alu_D_upd = [&] {
+            fmha_alu_D_upd_unpack();
+            fmha_alu_D_upd_pack();
+        };
+
         auto fmha_mask = [&](auto sp_reg_idx) {
             if constexpr(kPadSeqLenK || FmhaMask::IsMasking)
             {
@@ -917,14 +943,15 @@ struct BlockFmhaFwdV3Pipeline
                     q_origin.at(number<0>{}), kv_token_start, number<kM0>{}, number<kN0>{});
                 if(need_perpixel_check)
                 {
-                    set_tile_if(sp(sp_reg_idx).sp_compute,
-                                -numeric<SMPLComputeDataType>::infinity(),
-                                [&](auto tile_idx) {
-                                    const auto row =
-                                        q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
-                                    const auto col = kv_token_start + tile_idx.at(number<1>{});
-                                    return mask.IsOutOfBound(row, col);
-                                });
+                    set_tile_if(
+                        sp(sp_reg_idx).sp_compute,
+                        -numeric<SMPLComputeDataType>::infinity(),
+                        [&](auto tile_idx) {
+                            const auto row = q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
+                            const auto col = kv_token_start + tile_idx.at(number<1>{});
+                            return mask.IsOutOfBound(row, col);
+                        },
+                        partition_index);
                 }
             }
         };
@@ -969,10 +996,6 @@ struct BlockFmhaFwdV3Pipeline
 
                 if constexpr(cl_p == 0)
                 {
-#if ADD_SBARRIER_FOR_PHASE0
-                    __builtin_amdgcn_sched_barrier(0);
-                    __builtin_amdgcn_s_barrier();
-#endif
                     __builtin_amdgcn_sched_barrier(0);
                     // phase0
                     if constexpr(pi == 0)
@@ -985,6 +1008,15 @@ struct BlockFmhaFwdV3Pipeline
                     }
                     s_waitcnt_lgkmcnt<0>();
                     __builtin_amdgcn_sched_barrier(0);
+#if ADD_SBARRIER_FOR_PHASE0
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+#endif
+                    if constexpr(pi == 1)
+                    {
+                        asm volatile("s_nop 1");
+                        __builtin_amdgcn_sched_barrier(0);
+                    }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
 
@@ -1007,13 +1039,13 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
-                    asm volatile("s_nop 0");
+                    asm volatile("s_nop 1");
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
-
+                    fmha_alu_D_upd_unpack();
                     Scheduler::schedule(cl_p, number<2>{});
                     __builtin_amdgcn_sched_barrier(0);
-                    fmha_alu_D_upd();
+                    fmha_alu_D_upd_pack();
 
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
@@ -1088,10 +1120,10 @@ struct BlockFmhaFwdV3Pipeline
                     asm volatile("s_nop 1");
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
-
+                    fmha_alu_D_upd_unpack();
                     Scheduler::schedule(cl_p, number<3>{});
                     __builtin_amdgcn_sched_barrier(0);
-                    fmha_alu_D_upd();
+                    fmha_alu_D_upd_pack();
                 }
                 return result;
             };
@@ -1134,6 +1166,19 @@ struct BlockFmhaFwdV3Pipeline
 
             s_waitcnt_lgkmcnt<0>();
             __builtin_amdgcn_s_barrier();
+
+#if 0
+            DEBUG_STMTS {
+                const auto size = kv_tile.k_tile.thread_buf_.size();
+                for (int issue = 0; issue < size / 8; ++issue) {
+                    printf("[POYENC] k_tile[%2d] = %5.2f", issue, ck_tile::type_convert<float>(kv_tile.k_tile.thread_buf_[issue * 8]));
+                    for (int i = 1; i < 8; ++i) {
+                        printf(", %5.2f", ck_tile::type_convert<float>(kv_tile.k_tile.thread_buf_[issue * 8 + i]));
+                    }
+                    printf("\n");
+                }
+            }
+#endif
 
             // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
             if(1 < num_total_loop)
@@ -1240,17 +1285,24 @@ struct BlockFmhaFwdV3Pipeline
               typename KDramBlockWindowTmp,
               typename VDramBlockWindowTmp,
               typename LSEDramBlockWindowTmp>
-    CK_TILE_DEVICE auto operator()(const QDramBlockWindowTmp& q_dram_block_window_tmp, // M0*K0 tile
-                                   const KDramBlockWindowTmp& k_dram_block_window_tmp, // N0*K0 tile
-                                   const VDramBlockWindowTmp& v_dram_block_window_tmp, // N1*K1 tile
-                                   LSEDramBlockWindowTmp& lse_dram_block_window_tmp,   // M0*1 tile
-                                   FmhaMask mask,
-                                   float scale_s,
-                                   void* smem_ptr) const
+    CK_TILE_DEVICE auto
+    operator()(multi_index<2> partition_index,
+               const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
+               const KDramBlockWindowTmp& __restrict__ k_dram_block_window_tmp, // N0*K0 tile
+               const VDramBlockWindowTmp& __restrict__ v_dram_block_window_tmp, // N1*K1 tile
+               LSEDramBlockWindowTmp& __restrict__ lse_dram_block_window_tmp,   // M0*1 tile
+               FmhaMask mask,
+               float scale_s,
+               KDataType* __restrict__ smem_k0,
+               KDataType* __restrict__ smem_k1,
+               VDataType* __restrict__ smem_v0,
+               VDataType* __restrict__ smem_v1,
+               void* __restrict__ smem_ptr) const
     {
         using namespace ck_tile;
 
-        return operator()(q_dram_block_window_tmp,
+        return operator()(partition_index,
+                          q_dram_block_window_tmp,
                           identity{},
                           k_dram_block_window_tmp,
                           identity{},
@@ -1263,6 +1315,10 @@ struct BlockFmhaFwdV3Pipeline
                           identity{},
                           mask,
                           scale_s,
+                          smem_k0,
+                          smem_k1,
+                          smem_v0,
+                          smem_v1,
                           smem_ptr);
     }
 };
