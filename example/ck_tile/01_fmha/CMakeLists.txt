@@ -202,6 +202,7 @@ set(EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS)
 list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
   -fgpu-flush-denormals-to-zero
   -Wno-undefined-func-template
+  -Wno-undefined-reinterpret-cast
   --save-temps
 )
 set(EXAMPLE_FMHA_FWD_V3_COMPILE_DEFINITIONS)
