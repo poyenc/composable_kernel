@@ -1244,7 +1244,7 @@ struct BlockFmhaFwdV3Pipeline
         }
 
         // store lse
-        if constexpr(kStoreLSE)
+        if constexpr(false && kStoreLSE)
         {
             auto lse = make_static_distributed_tensor<LSEDataType>(m.get_tile_distribution());
 
