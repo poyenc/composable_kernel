@@ -163,12 +163,13 @@ struct FmhaFwdV3Kernel
     using ODataType    = ck_tile::remove_cvref_t<typename FmhaPipeline::ODataType>;
     using SaccDataType = ck_tile::remove_cvref_t<typename FmhaPipeline::SaccDataType>;
 
-    static constexpr bool kIsGroupMode = FmhaPipeline::kIsGroupMode;
-    static constexpr bool kPadSeqLenQ  = FmhaPipeline::kPadSeqLenQ;
-    static constexpr bool kPadSeqLenK  = FmhaPipeline::kPadSeqLenK;
-    static constexpr bool kPadHeadDimQ = FmhaPipeline::kPadHeadDimQ;
-    static constexpr bool kPadHeadDimV = FmhaPipeline::kPadHeadDimV;
-    static constexpr bool kStoreLSE    = FmhaPipeline::kStoreLSE;
+    static constexpr bool kIsGroupMode      = FmhaPipeline::kIsGroupMode;
+    static constexpr bool kPadSeqLenQ       = FmhaPipeline::kPadSeqLenQ;
+    static constexpr bool kPadSeqLenK       = FmhaPipeline::kPadSeqLenK;
+    static constexpr bool kPadHeadDimQ      = FmhaPipeline::kPadHeadDimQ;
+    static constexpr bool kPadHeadDimV      = FmhaPipeline::kPadHeadDimV;
+    static constexpr bool kHasLogitsSoftCap = FmhaPipeline::kHasLogitsSoftCap;
+    static constexpr bool kStoreLSE         = FmhaPipeline::kStoreLSE;
 
     using FmhaMask                 = ck_tile::remove_cvref_t<typename FmhaPipeline::FmhaMask>;
     static constexpr bool kHasMask = FmhaMask::IsMasking;
@@ -226,10 +227,33 @@ struct FmhaFwdV3Kernel
         ck_tile::index_t batch_stride_lse = 0;
     };
 
+    struct FmhaFwdLogitsSoftCapKargs
+    {
+        FmhaFwdLogitsSoftCapKargs() = default;
+
+        void init_logits_soft_cap(float logits_soft_cap_)
+        {
+            if(0 < logits_soft_cap_)
+            {
+                logits_soft_cap     = logits_soft_cap_;
+                logits_soft_cap_rcp = 1.f / logits_soft_cap;
+            }
+            else
+            {
+                logits_soft_cap     = 0.f;
+                logits_soft_cap_rcp = 0.f;
+            }
+        }
+
+        float logits_soft_cap;
+        float logits_soft_cap_rcp;
+    };
+
     struct FmhaFwdBatchModeKargs
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
-          std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>
+          std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
+          std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<2>>
     {
         ck_tile::index_t batch_stride_q;
         ck_tile::index_t batch_stride_k;
@@ -245,7 +269,8 @@ struct FmhaFwdV3Kernel
     struct FmhaFwdGroupModeKargs
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
-          std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>
+          std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
+          std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<2>>
     {
         const int32_t* seqstart_q_ptr;
         const int32_t* seqstart_k_ptr;
@@ -274,6 +299,7 @@ struct FmhaFwdV3Kernel
               ck_tile::index_t num_head_q,
               ck_tile::index_t nhead_ratio_qk,
               float scale_s,
+              float logits_soft_cap,
               ck_tile::index_t stride_q,
               ck_tile::index_t stride_k,
               ck_tile::index_t stride_v,
@@ -316,6 +342,7 @@ struct FmhaFwdV3Kernel
                      nhead_stride_o}, // args for common karg
                     {},               // placeholder for mask
                     {},               // placeholder for lse
+                    {},               // placeholder for logits_soft_cap
                     batch_stride_q,
                     batch_stride_k,
                     batch_stride_v,
@@ -333,6 +360,10 @@ struct FmhaFwdV3Kernel
             kargs.lse_ptr          = lse_ptr;
             kargs.nhead_stride_lse = nhead_stride_lse;
             kargs.batch_stride_lse = batch_stride_lse;
+        }
+        if constexpr(kHasLogitsSoftCap)
+        {
+            kargs.init_logits_soft_cap(logits_soft_cap);
         }
 
         kargs.cu_seqlen_q_ptr = reinterpret_cast<const int32_t*>(cu_seqlen_q_ptr);
@@ -356,6 +387,7 @@ struct FmhaFwdV3Kernel
               ck_tile::index_t num_head_q,
               ck_tile::index_t nhead_ratio_qk,
               float scale_s,
+              float logits_soft_cap,
               ck_tile::index_t stride_q,
               ck_tile::index_t stride_k,
               ck_tile::index_t stride_v,
@@ -393,6 +425,7 @@ struct FmhaFwdV3Kernel
                      nhead_stride_o}, // args for common karg
                     {},               // placeholder for mask
                     {},               // placeholder for lse
+                    {},               // placeholder for logits_soft_cap
                     reinterpret_cast<const int32_t*>(seqstart_q_ptr),
                     reinterpret_cast<const int32_t*>(seqstart_k_ptr),
                     reinterpret_cast<const int32_t*>(seqlen_q_ptr),
@@ -409,6 +442,10 @@ struct FmhaFwdV3Kernel
         {
             kargs.lse_ptr          = lse_ptr;
             kargs.nhead_stride_lse = nhead_stride_lse;
+        }
+        if constexpr(kHasLogitsSoftCap)
+        {
+            kargs.init_logits_soft_cap(logits_soft_cap);
         }
 
         kargs.cu_seqlen_q_ptr = reinterpret_cast<const int32_t*>(cu_seqlen_q_ptr);
