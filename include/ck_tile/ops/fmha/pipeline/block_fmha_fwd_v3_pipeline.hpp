@@ -290,6 +290,7 @@ struct BlockFmhaFwdV3Pipeline
     using PDataType           = ck_tile::remove_cvref_t<typename Problem::PDataType>;
     using OaccDataType        = ck_tile::remove_cvref_t<typename Problem::OaccDataType>;
     using ODataType           = ck_tile::remove_cvref_t<typename Problem::ODataType>;
+    using AttentionVariant    = ck_tile::remove_cvref_t<typename Problem::AttentionVariant>;
     using FmhaMask            = ck_tile::remove_cvref_t<typename Problem::FmhaMask>;
 
     static_assert(std::is_same_v<SaccDataType, SMPLComputeDataType>,
@@ -320,8 +321,7 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr bool kHasDropout       = Problem::kHasDropout;
     static constexpr auto QScaleEnum        = Problem::QScaleEnum;
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((!kHasLogitsSoftCap && BiasEnum == BlockAttentionBiasEnum::NO_BIAS &&
-                   !kStoreLSE && !kHasDropout &&
+    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kStoreLSE && !kHasDropout &&
                    (QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE) &&
                    !kSkipMinSeqlenQ),
                   "enable unsupported features");
@@ -415,7 +415,9 @@ struct BlockFmhaFwdV3Pipeline
               typename LSEElementFunction,
               typename SAccElementFunction,
               typename PComputeElementFunction,
-              typename OAccElementFunction>
+              typename OAccElementFunction,
+              typename AttentionVariantParams,
+              typename BlockIndices>
     CK_TILE_DEVICE auto
     operator()(multi_index<2> partition_index,
                const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
@@ -431,6 +433,9 @@ struct BlockFmhaFwdV3Pipeline
                const OAccElementFunction& o_acc_element_func,
                FmhaMask mask,
                float scale_s,
+               [[maybe_unused]] const AttentionVariant& variant,
+               const AttentionVariantParams& variant_params,
+               [[maybe_unused]] const BlockIndices& block_indices,
                KDataType* __restrict__ smem_k0,
                KDataType* __restrict__ smem_k1,
                VDataType* __restrict__ smem_v0,
@@ -755,6 +760,19 @@ struct BlockFmhaFwdV3Pipeline
         /// TODO: remove the sp_delta and use sp_compute directly
         statically_indexed_array<decltype(sp(number<0>{}).sp_compute), 2> sp_delta;
 
+        auto fmha_logits_trans = [&](auto sp_reg_idx) {
+            if constexpr(kHasLogitsSoftCap)
+            {
+                auto apply_logits_transform = [&variant_params](auto& logits) {
+                    logits = variant_params.logits_soft_cap *
+                             tanh_fast<float>(type_convert<float>(logits) *
+                                              variant_params.logits_soft_cap_rcp);
+                };
+
+                tile_elementwise_inout(apply_logits_transform, sp(sp_reg_idx).sp_compute);
+            }
+        };
+
         auto fmha_alu0 = [&](auto sp_reg_idx) {
             m_old = m; // m{j-1}
             static_assert(m.thread_buf_.size() == 1,
@@ -780,9 +798,17 @@ struct BlockFmhaFwdV3Pipeline
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
                 sweep_tile_span(p_spans[number<1>{}], [&](auto idx1) {
-                    constexpr auto i_j_idx        = make_tuple(idx0, idx1);
-                    sp_delta(sp_reg_idx)(i_j_idx) = detail::fma_impl_vsv(
-                        sp(sp_reg_idx).sp_compute(i_j_idx), scale_s, -scale_s * m(i_j_idx));
+                    constexpr auto i_j_idx = make_tuple(idx0, idx1);
+                    if constexpr(kHasLogitsSoftCap)
+                    {
+                        sp_delta(sp_reg_idx)(i_j_idx) =
+                            sp(sp_reg_idx).sp_compute(i_j_idx) - m(i_j_idx);
+                    }
+                    else
+                    {
+                        sp_delta(sp_reg_idx)(i_j_idx) = detail::fma_impl_vsv(
+                            sp(sp_reg_idx).sp_compute(i_j_idx), scale_s, -scale_s * m(i_j_idx));
+                    }
                 });
             });
             /// TODO: move some fmha_alu1() code here if necessary
@@ -827,8 +853,16 @@ struct BlockFmhaFwdV3Pipeline
             constexpr auto o_spans = decltype(o_acc)::get_distributed_spans();
             sweep_tile_span(o_spans[number<0>{}], [&](auto idx0) {
                 constexpr auto i_idx = make_tuple(idx0);
-                const auto tmp       = ck_tile::exp2(scale_s * (m_old[i_idx] - m[i_idx]));
-
+                const auto tmp       = [&] {
+                    if constexpr(kHasLogitsSoftCap)
+                    {
+                        return ck_tile::exp2(m_old[i_idx] - m[i_idx]);
+                    }
+                    else
+                    {
+                        return ck_tile::exp2(scale_s * (m_old[i_idx] - m[i_idx]));
+                    }
+                }();
                 l(i_idx) = detail::add_impl_vv(tmp * l[i_idx], rowsum_p[i_idx]);
             });
 
@@ -918,7 +952,17 @@ struct BlockFmhaFwdV3Pipeline
                 // to prevent SIMD idle and the resulting warm-up period.
         fp32x2_t pk_o_acc_scale;
         auto fmha_alu_D_upd_unpack = [&] {
-            o_acc_scale = ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
+            [[maybe_unused]] auto prev_o_acc_scale = o_acc_scale;
+            o_acc_scale                            = [&] {
+                if constexpr(kHasLogitsSoftCap)
+                {
+                    return ck_tile::exp2(m_old.thread_buf_[0] - m.thread_buf_[0]);
+                }
+                else
+                {
+                    return ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
+                }
+            }();
 
             static_assert(num_unpack_insts % 2 == 0 &&
                           (fmha_alu_D_reg_cnt + num_unpack_insts) <= o_acc.thread_buf_.size());
@@ -1033,6 +1077,7 @@ struct BlockFmhaFwdV3Pipeline
                     }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
+                    fmha_logits_trans(xdl_SP_p01_reg_idx);
 
                     Scheduler::schedule(cl_p, number<0>{});
                     __builtin_amdgcn_sched_barrier(0);
@@ -1107,6 +1152,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
+                    fmha_logits_trans(xdl_SP_p01_reg_idx);
 
                     Scheduler::schedule(cl_p, number<1>{});
                     __builtin_amdgcn_sched_barrier(0);
@@ -1203,7 +1249,7 @@ struct BlockFmhaFwdV3Pipeline
 
             // (3) mfma (Q*K0) + softmax
             gemm(number<0>{}, /*gemm_idx=*/number<0>{});
-
+            fmha_logits_trans(number<0>{});
             fmha_mask(number<0>{});
             /// TODO: find better way to map fmha_alu(0,96) call
             fmha_alu0(number<0>{});
@@ -1298,7 +1344,9 @@ struct BlockFmhaFwdV3Pipeline
     template <typename QDramBlockWindowTmp,
               typename KDramBlockWindowTmp,
               typename VDramBlockWindowTmp,
-              typename LSEDramBlockWindowTmp>
+              typename LSEDramBlockWindowTmp,
+              typename AttentionVariantParams,
+              typename BlockIndices>
     CK_TILE_DEVICE auto
     operator()(multi_index<2> partition_index,
                const QDramBlockWindowTmp& __restrict__ q_dram_block_window_tmp, // M0*K0 tile
@@ -1307,6 +1355,9 @@ struct BlockFmhaFwdV3Pipeline
                LSEDramBlockWindowTmp& __restrict__ lse_dram_block_window_tmp,   // M0*1 tile
                FmhaMask mask,
                float scale_s,
+               const AttentionVariant& variant,
+               const AttentionVariantParams& variant_params,
+               const BlockIndices& block_indices,
                KDataType* __restrict__ smem_k0,
                KDataType* __restrict__ smem_k1,
                VDataType* __restrict__ smem_v0,
@@ -1329,6 +1380,9 @@ struct BlockFmhaFwdV3Pipeline
                           identity{},
                           mask,
                           scale_s,
+                          variant,
+                          variant_params,
+                          block_indices,
                           smem_k0,
                           smem_k1,
                           smem_v0,

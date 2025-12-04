@@ -6,6 +6,7 @@
 #include "ck_tile/core.hpp"
 #include "ck_tile/ops/common.hpp"
 #include "ck_tile/ops/fmha/block/block_masking.hpp"
+#include "ck_tile/ops/fmha/block/variants.hpp"
 
 #include <type_traits>
 #include <utility>
@@ -171,7 +172,8 @@ struct FmhaFwdV3Kernel
     static constexpr bool kHasLogitsSoftCap = FmhaPipeline::kHasLogitsSoftCap;
     static constexpr bool kStoreLSE         = FmhaPipeline::kStoreLSE;
 
-    using FmhaMask                 = ck_tile::remove_cvref_t<typename FmhaPipeline::FmhaMask>;
+    using AttentionVariant = ck_tile::remove_cvref_t<typename FmhaPipeline::AttentionVariant>;
+    using FmhaMask         = ck_tile::remove_cvref_t<typename FmhaPipeline::FmhaMask>;
     static constexpr bool kHasMask = FmhaMask::IsMasking;
 
     template <ck_tile::index_t I> // to avoid duplicated base class prblem, introduce an template
@@ -284,6 +286,13 @@ struct FmhaFwdV3Kernel
     };
 
     using Kargs = std::conditional_t<kIsGroupMode, FmhaFwdGroupModeKargs, FmhaFwdBatchModeKargs>;
+
+    struct BlockIndices
+    {
+        ck_tile::index_t batch_idx;
+        ck_tile::index_t qo_head_idx;
+        ck_tile::index_t kv_head_idx;
+    };
 
     template <bool Cond = !kIsGroupMode>
     CK_TILE_HOST static constexpr std::enable_if_t<Cond, Kargs>
@@ -873,6 +882,21 @@ struct FmhaFwdV3Kernel
 
         const auto partition_index = multi_index<2>{get_warp_id(), get_lane_id()};
 
+        AttentionVariant variant;
+        const auto variant_params = [&] {
+            if constexpr(kHasLogitsSoftCap)
+            {
+                return ck_tile::LogitsSoftCapParams<FmhaMask, CK_TILE_FMHA_FWD_FAST_EXP2>{
+                    mask, kargs.scale_s, kargs.logits_soft_cap, kargs.logits_soft_cap_rcp};
+            }
+            else
+            {
+                return ck_tile::StandardAttentionParams<FmhaMask>{mask, kargs.scale_s};
+            }
+        }();
+
+        BlockIndices block_indices{i_batch, i_nhead, i_nhead / kargs.nhead_ratio_qk};
+
         auto o_acc_tile = [&]() {
             return FmhaPipeline{}(partition_index,
                                   q_dram_window,
@@ -881,6 +905,9 @@ struct FmhaFwdV3Kernel
                                   lse_dram_window,
                                   mask,
                                   kargs.scale_s,
+                                  variant,
+                                  variant_params,
+                                  block_indices,
                                   reinterpret_cast<KDataType*>(smem_k[0]),
                                   reinterpret_cast<KDataType*>(smem_k[1]),
                                   reinterpret_cast<VDataType*>(smem_v[0]),
