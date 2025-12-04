@@ -433,9 +433,9 @@ struct BlockFmhaFwdV3Pipeline
                const OAccElementFunction& o_acc_element_func,
                FmhaMask mask,
                float scale_s,
-               [[maybe_unused]] const AttentionVariant& variant,
+               const AttentionVariant& variant,
                const AttentionVariantParams& variant_params,
-               [[maybe_unused]] const BlockIndices& block_indices,
+               const BlockIndices& block_indices,
                KDataType* __restrict__ smem_k0,
                KDataType* __restrict__ smem_k1,
                VDataType* __restrict__ smem_v0,
@@ -763,10 +763,13 @@ struct BlockFmhaFwdV3Pipeline
         auto fmha_logits_trans = [&](auto sp_reg_idx) {
             if constexpr(kHasLogitsSoftCap)
             {
-                auto apply_logits_transform = [&variant_params](auto& logits) {
-                    logits = variant_params.logits_soft_cap *
-                             tanh_fast<float>(type_convert<float>(logits) *
-                                              variant_params.logits_soft_cap_rcp);
+                auto apply_logits_transform = [&variant, &variant_params, &block_indices](
+                                                  auto& logits) {
+                    logits = variant.LogitsTransform(variant_params,
+                                                     variant.QueryTransform(variant_params, logits),
+                                                     block_indices.batch_idx,
+                                                     block_indices.qo_head_idx,
+                                                     block_indices.kv_head_idx);
                 };
 
                 tile_elementwise_inout(apply_logits_transform, sp(sp_reg_idx).sp_compute);
@@ -1007,7 +1010,12 @@ struct BlockFmhaFwdV3Pipeline
                         [&](auto tile_idx) {
                             const auto row = q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
                             const auto col = kv_token_start + tile_idx.at(number<1>{});
-                            return mask.IsOutOfBound(row, col);
+                            return !variant.LogitsMask(variant_params,
+                                                       block_indices.batch_idx,
+                                                       row,
+                                                       col,
+                                                       block_indices.qo_head_idx,
+                                                       block_indices.kv_head_idx);
                         },
                         partition_index);
                 }
