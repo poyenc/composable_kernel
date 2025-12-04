@@ -55,7 +55,7 @@ using fmha_fwd_v3_kernel_traits =
                      ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                      false,
                      false,
-                     false,
+                     ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                      true,
                      true,
                      false,
@@ -95,7 +95,7 @@ struct get_fmha_fwd_v3_kernel
                                                 false,
                                                 false,
                                                 false,
-                                                false,
+                                                BlockAttentionQuantScaleEnum::NO_SCALE,
                                                 -1,
                                                 false>;
 

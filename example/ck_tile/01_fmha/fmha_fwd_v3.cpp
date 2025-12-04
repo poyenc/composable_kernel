@@ -71,7 +71,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                 if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
                    (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
                    (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                   (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                   (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                    (t.skip_min_seqlen_q == false) && (true) &&
                    (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
                    (a.hdim_v % 128 == 0) && ((true) && (true)))
@@ -93,7 +93,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -107,7 +107,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                         (t.mask_type == mask_enum::mask_top_left ||
                          t.mask_type == mask_enum::mask_bottom_right) &&
                         (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                        (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                         (t.skip_min_seqlen_q == false) && (true) &&
                         (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
                         (a.hdim_v % 128 == 0) && ((true) && (true)))
@@ -129,7 +129,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -141,7 +141,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                 else if((t.is_group_mode == true) && (t.is_v_rowmajor == true) &&
                         (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
                         (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                        (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                         (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
                         (true /*fall back to largest tile*/) &&
                         (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
@@ -164,7 +164,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -178,7 +178,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                         (t.mask_type == mask_enum::mask_top_left ||
                          t.mask_type == mask_enum::mask_bottom_right) &&
                         (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                        (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                         (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
                         (true /*fall back to largest tile*/) &&
                         (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
@@ -201,7 +201,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -219,7 +219,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                 if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
                    (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
                    (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                   (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                   (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                    (t.skip_min_seqlen_q == false) && (true) &&
                    (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
                    (a.hdim_v % 128 == 0) && ((true) && (true)))
@@ -241,7 +241,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -255,7 +255,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                         (t.mask_type == mask_enum::mask_top_left ||
                          t.mask_type == mask_enum::mask_bottom_right) &&
                         (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                        (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                         (t.skip_min_seqlen_q == false) && (true) &&
                         (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
                         (a.hdim_v % 128 == 0) && ((true) && (true)))
@@ -277,7 +277,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -289,7 +289,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                 else if((t.is_group_mode == true) && (t.is_v_rowmajor == true) &&
                         (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
                         (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                        (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                         (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
                         (true /*fall back to largest tile*/) &&
                         (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
@@ -312,7 +312,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
@@ -326,7 +326,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                         (t.mask_type == mask_enum::mask_top_left ||
                          t.mask_type == mask_enum::mask_bottom_right) &&
                         (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
-                        (t.has_dropout == false) && (t.do_fp8_static_quant == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                         (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
                         (true /*fall back to largest tile*/) &&
                         (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
@@ -349,7 +349,7 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
                                          false,
-                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
                                          true,
                                          true,
                                          false,
