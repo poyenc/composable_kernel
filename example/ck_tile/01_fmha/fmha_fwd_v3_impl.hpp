@@ -99,7 +99,9 @@ struct get_fmha_fwd_v3_kernel
                                                 -1,
                                                 false>;
 
-    using fmha_variant = ck_tile::ComposedAttention<KernelTraits::kHasLogitsSoftCap * ck_tile::LOGITS_SOFT_CAP>;
+    using fmha_variant =
+        ck_tile::ComposedAttention<KernelTraits::kHasLogitsSoftCap * ck_tile::LOGITS_SOFT_CAP,
+                                   CK_TILE_FMHA_FWD_FAST_EXP2>;
 
     using fmha_mask = KernelTraits::FmhaMask;
 
