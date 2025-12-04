@@ -1,5 +1,5 @@
+// Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 #pragma once
 
@@ -145,6 +145,8 @@ constexpr T inverse_value_token_remap(T y)
 #endif
 }
 
+/// NOTICE: This kernel is a work in progress and is awaiting upcoming compiler fixes and
+/// instruction scheduling optimizations.
 template <typename FmhaPipeline_, typename EpiloguePipeline_>
 struct FmhaFwdV3Kernel
 {
