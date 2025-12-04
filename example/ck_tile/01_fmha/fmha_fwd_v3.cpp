@@ -69,12 +69,82 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
             if(t.hdim_q <= 128 && t.hdim_v <= 128)
             {
                 if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
-                   (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
+                   (t.has_logits_soft_cap == true) && (t.mask_type == mask_enum::no_mask) &&
                    (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
                    (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                    (t.skip_min_seqlen_q == false) && (true) &&
                    (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
                    (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdFp16,
+                                         false,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
+                                         FmhaMasks::NoMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == true) &&
+                        (t.mask_type == mask_enum::mask_top_left ||
+                         t.mask_type == mask_enum::mask_bottom_right) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true) &&
+                        (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdFp16,
+                                         false,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
+                                         FmhaMasks::CausalMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true) &&
+                        (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
                 {
                     using trait_ =
                         fmha_fwd_traits_<128,
@@ -125,6 +195,78 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          true,
                                          ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
                                          false,
+                                         FmhaMasks::CausalMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == true) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == true) && (t.mask_type == mask_enum::no_mask) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
+                        (true /*fall back to largest tile*/) &&
+                        (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdFp16,
+                                         true,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
+                                         FmhaMasks::NoMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == true) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == true) &&
+                        (t.mask_type == mask_enum::mask_top_left ||
+                         t.mask_type == mask_enum::mask_bottom_right) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
+                        (true /*fall back to largest tile*/) &&
+                        (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdFp16,
+                                         true,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
                                          FmhaMasks::CausalMask,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,
@@ -217,12 +359,82 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
             if(t.hdim_q <= 128 && t.hdim_v <= 128)
             {
                 if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
-                   (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
+                   (t.has_logits_soft_cap == true) && (t.mask_type == mask_enum::no_mask) &&
                    (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
                    (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
                    (t.skip_min_seqlen_q == false) && (true) &&
                    (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
                    (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdBf16,
+                                         false,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
+                                         FmhaMasks::NoMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == true) &&
+                        (t.mask_type == mask_enum::mask_top_left ||
+                         t.mask_type == mask_enum::mask_bottom_right) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true) &&
+                        (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdBf16,
+                                         false,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
+                                         FmhaMasks::CausalMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == false) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == false) && (t.mask_type == mask_enum::no_mask) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true) &&
+                        (true /*fall back to largest tile*/) && (true) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
                 {
                     using trait_ =
                         fmha_fwd_traits_<128,
@@ -273,6 +485,78 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
                                          true,
                                          ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
                                          false,
+                                         FmhaMasks::CausalMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == true) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == true) && (t.mask_type == mask_enum::no_mask) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
+                        (true /*fall back to largest tile*/) &&
+                        (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdBf16,
+                                         true,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
+                                         FmhaMasks::NoMask,
+                                         ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                                         false,
+                                         false,
+                                         ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                                         true,
+                                         true,
+                                         false,
+                                         false,
+                                         true,
+                                         false>;
+                    return fmha_fwd_<trait_, ck_tile::gfx950_t>(s, a);
+                }
+                else if((t.is_group_mode == true) && (t.is_v_rowmajor == true) &&
+                        (t.has_logits_soft_cap == true) &&
+                        (t.mask_type == mask_enum::mask_top_left ||
+                         t.mask_type == mask_enum::mask_bottom_right) &&
+                        (t.bias_type == bias_enum::no_bias) && (t.has_lse == false) &&
+                        (t.has_dropout == false) && (t.qscale_type == quant_scale_enum::no_scale) &&
+                        (t.skip_min_seqlen_q == false) && (true /*group mode spad always true*/) &&
+                        (true /*fall back to largest tile*/) &&
+                        (true /*group mode skpad always true*/) && (a.hdim_q % 128 == 0) &&
+                        (a.hdim_v % 128 == 0) && ((true) && (true)))
+                {
+                    using trait_ =
+                        fmha_fwd_traits_<128,
+                                         FmhaFwdBf16,
+                                         true,
+                                         256,
+                                         64,
+                                         128,
+                                         128,
+                                         64,
+                                         128,
+                                         true,
+                                         ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                                         true,
                                          FmhaMasks::CausalMask,
                                          ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                          false,

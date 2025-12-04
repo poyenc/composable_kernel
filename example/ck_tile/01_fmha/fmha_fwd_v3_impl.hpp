@@ -37,7 +37,7 @@
 
 namespace ck_tile {
 
-template <typename DataType, bool kIsGroupMode, bool kIsMasking>
+template <typename DataType, bool kIsGroupMode, bool kHasLogitsSoftCap, bool kIsMasking>
 using fmha_fwd_v3_kernel_traits =
     fmha_fwd_traits_<128,
                      DataType,
@@ -50,7 +50,7 @@ using fmha_fwd_v3_kernel_traits =
                      128,
                      true,
                      ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
-                     false,
+                     kHasLogitsSoftCap,
                      ck_tile::GenericAttentionMask<kIsMasking, /*IsLocal=*/false>,
                      ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                      false,
@@ -90,7 +90,7 @@ struct get_fmha_fwd_v3_kernel
                                                 KernelTraits::kPadSK,
                                                 KernelTraits::kPadD,
                                                 KernelTraits::kPadDv,
-                                                false,
+                                                KernelTraits::kHasLogitsSoftCap,
                                                 ck_tile::BlockAttentionBiasEnum::NO_BIAS,
                                                 false,
                                                 false,
@@ -99,7 +99,7 @@ struct get_fmha_fwd_v3_kernel
                                                 -1,
                                                 false>;
 
-    using fmha_variant = ck_tile::ComposedAttention<false * ck_tile::LOGITS_SOFT_CAP>;
+    using fmha_variant = ck_tile::ComposedAttention<KernelTraits::kHasLogitsSoftCap * ck_tile::LOGITS_SOFT_CAP>;
 
     using fmha_mask = KernelTraits::FmhaMask;
 
