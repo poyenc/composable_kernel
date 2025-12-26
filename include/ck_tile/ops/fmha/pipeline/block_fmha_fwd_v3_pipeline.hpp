@@ -950,9 +950,13 @@ struct BlockFmhaFwdV3Pipeline
             }
         };
 
-        constexpr index_t num_unpack_insts =
-            26; // Threshold for keeping some rescaling instructions unpacked
-                // to prevent SIMD idle and the resulting warm-up period.
+        // Threshold for keeping some output-rescaling instructions unpacked to avoid SIMD idle time
+        // and the resulting warm-up period.
+        // When kHasLogitsSoftCap == true, phase 2 (waves 0–3) and phase 3 (waves 4–7) contain fewer
+        // VOPs. To avoid SIMD idling, we align the end of the load and compute phases and preserve
+        // the structure of the kHasLogitsSoftCap == false path (only the early compute phases are
+        // lengthened by the logits soft-capping instructions).
+        constexpr index_t num_unpack_insts = kHasLogitsSoftCap ? 48 : 26;
         fp32x2_t pk_o_acc_scale;
         auto fmha_alu_D_upd_unpack = [&] {
             [[maybe_unused]] auto prev_o_acc_scale = o_acc_scale;
