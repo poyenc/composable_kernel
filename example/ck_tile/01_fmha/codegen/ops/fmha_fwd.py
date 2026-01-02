@@ -1072,6 +1072,7 @@ class KernelComponentFactoryGfx950(
         )
         if dtype in cls._DT_FP16_BF16:
             qscale = "no"
+            """
             for logits, mask, bias, lse, dropout, skip, sink in itertools.product(
                 ["t", "f"],
                 get_mask_map(mask_impl).keys(),
@@ -1090,7 +1091,7 @@ class KernelComponentFactoryGfx950(
                 ):
                     pipelines.append(FmhaFwdPipeline("qr_async_trload", "row", "f", "f", "f", "f", logits, bias, lse, dropout, qscale, mask, skip, "t", sink))  # fmt: skip
                     pipelines.append(FmhaFwdPipeline("qr_async_trload", "row", "f", "f", "t", "t", logits, bias, lse, dropout, qscale, mask, skip, "t", sink))  # fmt: skip
-
+            """
             # qr_async_trload_v3 only supports hdim=hdim_v=128 for now
             if (hdim, hdim_v) == (128, 128):
                 # qr_async_trload_v3 only supports (generic) causal mask
