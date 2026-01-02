@@ -438,7 +438,7 @@ class FmhaFwdPipeline:
                 n += "_nmask"
         else:
             if self.F_mask != "no":
-                n += f"_mask"
+                n += f"_m{self.F_mask[0]}"
             else:
                 n += "_nmask"
 
