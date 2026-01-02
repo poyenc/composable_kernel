@@ -292,11 +292,15 @@ struct BlockFmhaFwdV3Pipeline
     using ODataType           = ck_tile::remove_cvref_t<typename Problem::ODataType>;
     using AttentionVariant    = ck_tile::remove_cvref_t<typename Problem::AttentionVariant>;
     using FmhaMask            = ck_tile::remove_cvref_t<typename Problem::FmhaMask>;
+    static_assert(is_generic_attention_mask_v<FmhaMask>);
 
     static_assert(std::is_same_v<SaccDataType, SMPLComputeDataType>,
                   "we will the same dist tensor 'sp_compute' for both gemm0 & softmax");
 
     using BlockFmhaShape = ck_tile::remove_cvref_t<typename Problem::BlockFmhaShape>;
+
+    using VLayout = remove_cvref_t<typename BlockFmhaShape::VLayout>;
+    static_assert(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>);
 
     static constexpr ck_tile::index_t kBlockSize = Problem::kBlockSize;
 
@@ -308,7 +312,7 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr ck_tile::index_t kQKHeaddim    = BlockFmhaShape::kQKHeaddim;
     static constexpr ck_tile::index_t kSubQKHeaddim = BlockFmhaShape::kSubQKHeaddim;
 
-    static_assert(kSubQKHeaddim <= 256, "hdim bigger than 256 is not suitable for this pipeline!");
+    static_assert(kQKHeaddim == 128 && kSubQKHeaddim == 128, "only supports hdim=hdim_v=128");
 
     static constexpr bool kIsGroupMode      = Problem::kIsGroupMode;
     static constexpr bool kPadSeqLenQ       = Problem::kPadSeqLenQ;

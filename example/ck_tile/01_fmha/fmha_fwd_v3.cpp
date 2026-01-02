@@ -48,18 +48,6 @@ float fmha_fwd_v3([[maybe_unused]] fmha_fwd_traits t,
 {
     float r = -1;
 
-    [[maybe_unused]] const float min_cu_util_rate = 0.8; // minimum CU utilization rate
-
-    unsigned num_cus;
-    if(!get_num_cus(num_cus))
-    {
-        return r;
-    }
-
-    [[maybe_unused]] auto get_num_blocks = [&](unsigned kM0) {
-        return get_num_thread_blocks(a.batch, a.nhead_q, a.max_seqlen_q, kM0);
-    };
-
     [[maybe_unused]] const std::string device_name = ck_tile::get_device_name();
 
     if(device_name.compare(0, 6, "gfx950") == 0)
