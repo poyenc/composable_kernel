@@ -685,13 +685,16 @@ struct FmhaFwdV3Kernel
         // We add key offset to the base address for each thread here
         index_t thread_key_token_offset = 0;
         {
+            // For a K tile size of [32, 128] with fp16/bf16, we expect to use a single buffer_load
+            // instruction to load the tile. For a K tile size of [64, 128] with fp16/bf16, or [128,
+            // 128] with fp8, we expect to use two buffer_load instructions.
             constexpr index_t kVectorSize =
                 FmhaPipeline::Policy::template GetAlignmentK<typename FmhaPipeline::Problem>();
             if constexpr(FmhaPipeline::kN0 == 32)
             {
                 static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize == kVectorSize);
             }
-            else if constexpr(FmhaPipeline::kN0 == 64)
+            else if constexpr(FmhaPipeline::kN0 == 64 || FmhaPipeline::kN0 == 128)
             {
                 static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize ==
                               2 * kVectorSize);
@@ -716,13 +719,16 @@ struct FmhaFwdV3Kernel
         // We add value offset to the base address for each thread here
         index_t thread_value_token_offset = 0;
         {
+            // For a V tile size of [32, 128] with fp16/bf16, we expect to use a single buffer_load
+            // instruction to load the tile. For a V tile size of [64, 128] with fp16/bf16, or [128,
+            // 128] with fp8, we expect to use two buffer_load instructions.
             constexpr index_t kVectorSize =
                 FmhaPipeline::Policy::template GetAlignmentV<typename FmhaPipeline::Problem>();
             if constexpr(FmhaPipeline::kK1 == 32)
             {
                 static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize == kVectorSize);
             }
-            else if constexpr(FmhaPipeline::kK1 == 64)
+            else if constexpr(FmhaPipeline::kK1 == 64 || FmhaPipeline::kN0 == 128)
             {
                 static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize ==
                               2 * kVectorSize);
