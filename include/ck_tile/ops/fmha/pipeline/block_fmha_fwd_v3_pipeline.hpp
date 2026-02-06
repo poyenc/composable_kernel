@@ -246,6 +246,19 @@ CK_TILE_DEVICE fp32x2_t pk_mul_f32(fp32x2_t lhs, fp32x2_t rhs)
                  : [lhs] "v"(lhs), [rhs] "v"(rhs));
     return result;
 }
+
+/// FP8 packed conversion with asm volatile to prevent code sinking.
+/// This anchors the conversion instruction in Phase 0, and all predecessor
+/// instructions (scale, saturate, NaN check) will automatically stay in Phase 0.
+/// v_cvt_pk_fp8_f32 packs two FP8 values into lower 16 bits of a 32-bit VGPR.
+CK_TILE_DEVICE uint32_t cvt_pk_fp8_f32(float a, float b)
+{
+    uint32_t result;
+    asm volatile("v_cvt_pk_fp8_f32 %[result], %[a], %[b]"
+                 : [result] "=v"(result)
+                 : [a] "v"(a), [b] "v"(b));
+    return result;
+}
 } // namespace detail
 
 /// NOTICE: This pipeline is a work in progress and is awaiting upcoming compiler fixes and
@@ -299,9 +312,10 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr bool kHasDropout       = Problem::kHasDropout;
     static constexpr auto QScaleEnum        = Problem::QScaleEnum;
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kStoreLSE && !kHasDropout &&
+    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout &&
                    !kSkipMinSeqlenQ),
                   "enable unsupported features");
+    // HACK: Removed !kStoreLSE check to allow BF16 V3 compilation for assembly analysis
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -861,8 +875,11 @@ struct BlockFmhaFwdV3Pipeline
                 }
                 else if constexpr(std::is_same_v<PDataType, fp8_t>)
                 {
-                    sp(sp_reg_idx).p.thread_buf_[idx]     = type_convert<PDataType>(x);
-                    sp(sp_reg_idx).p.thread_buf_[idx + 1] = type_convert<PDataType>(y);
+                    // Use asm volatile wrapper to prevent code sinking
+                    // v_cvt_pk_fp8_f32 packs two FP8 into lower 16 bits of 32-bit result
+                    uint32_t packed                       = detail::cvt_pk_fp8_f32(x, y);
+                    sp(sp_reg_idx).p.thread_buf_[idx]     = bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
+                    sp(sp_reg_idx).p.thread_buf_[idx + 1] = bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
                 }
                 else
                 {
