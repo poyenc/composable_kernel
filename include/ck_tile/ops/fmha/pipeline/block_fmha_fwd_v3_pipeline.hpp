@@ -345,29 +345,6 @@ struct BlockFmhaFwdV3Pipeline
         return make_tile_window(tensor_view, desc.get_lengths(), {0, 0});
     }
 
-    // vmcnt=0~63, lgkmcnt=0~15, expcnt=0~7
-    template <uint16_t Vmcnt, uint8_t Lgkmcnt, uint8_t Expcnt = 7>
-    CK_TILE_DEVICE static constexpr void s_waitcnt()
-    {
-        // vmcnt use bits {[15:14],[3:0]}
-        // expcnt use bits [6:4]
-        // lgkmcnt use bits [11:8]
-        __builtin_amdgcn_s_waitcnt((((0b110000 & Vmcnt) << (14 - 4)) | (0b1111 & Vmcnt)) |
-                                   ((0b111 & Expcnt) << 4) | ((0b1111 & Lgkmcnt) << 8));
-    }
-
-    template <uint16_t Vmcnt>
-    CK_TILE_DEVICE static constexpr void s_waitcnt_vmcnt()
-    {
-        s_waitcnt<Vmcnt, 15>();
-    }
-
-    template <uint8_t Lgkmcnt>
-    CK_TILE_DEVICE static constexpr void s_waitcnt_lgkmcnt()
-    {
-        s_waitcnt<63, Lgkmcnt>();
-    }
-
     template <typename QDramBlockWindowTmp,
               typename KDramBlockWindowTmp,
               typename VDramBlockWindowTmp,
@@ -1028,7 +1005,7 @@ struct BlockFmhaFwdV3Pipeline
                     {
                         ASM_MARKER("phase0 Wave0-3 (pi=1)");
                     }
-                    s_waitcnt_lgkmcnt<0>();
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
@@ -1038,7 +1015,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave0-3");
-                    s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1049,7 +1026,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase2
                     ASM_MARKER("phase2 Wave0-3");
-                    s_waitcnt_lgkmcnt<0>();
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1064,7 +1041,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
                     ASM_MARKER("phase3 Wave0-3");
-                    s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1099,7 +1076,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave4-7");
-                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, 0>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1128,7 +1105,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
                     ASM_MARKER("phase3 Wave4-7");
-                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, 0>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1151,18 +1128,18 @@ struct BlockFmhaFwdV3Pipeline
 
             if(1 < num_total_loop)
             {
-                s_waitcnt_vmcnt<K_mem_su_ld_insts>();
+                s_waitcnt<K_mem_su_ld_insts>();
             }
             else
             {
-                s_waitcnt_vmcnt<0>();
+                s_waitcnt<0>();
             }
             __builtin_amdgcn_s_barrier();
 
             V_lds_load(V_lds_rd_idx);
             fmha_alu1(ps_pi);
 
-            s_waitcnt_lgkmcnt<0>();
+            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
 
             auto xdl_SP_p23_reg_idx = ps_pi;
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
@@ -1174,12 +1151,12 @@ struct BlockFmhaFwdV3Pipeline
             // (1) load K0 to LDS & VGPR
             K_mem_load(number<0>{}); // mem_K0
 
-            s_waitcnt_vmcnt<0>();
+            s_waitcnt<0>();
             __builtin_amdgcn_s_barrier();
 
             K_lds_load(number<0>{}); // lds_K0
 
-            s_waitcnt_lgkmcnt<0>();
+            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
             __builtin_amdgcn_s_barrier();
 
             // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
@@ -1208,7 +1185,7 @@ struct BlockFmhaFwdV3Pipeline
             {
                 K_mem_load(number<0>{}); // mem_K2
 
-                s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
             }
 
