@@ -37,155 +37,119 @@
 
 namespace ck_tile {
 
-template <typename PipelineProblem, bool kIsMasking>
-struct CoreLoopScheduler;
-
-template <typename PipelineProblem>
-struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
+// ---------------------------------------------------------------------------
+// CoreLoopSchedulingParams: auto-derived instruction counts from tile/gemm config
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem,
+          typename Policy = BlockFmhaV3PipelineDefaultPolicy>
+struct CoreLoopSchedulingParams
 {
+    using QKBlockGemm =
+        ck_tile::remove_cvref_t<decltype(Policy::template GetQKBlockGemm<PipelineProblem>())>;
+    using PVBlockGemm =
+        ck_tile::remove_cvref_t<decltype(Policy::template GetPVBlockGemm<PipelineProblem>())>;
+
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm0 =
+        QKBlockGemm::MIterPerWarp * QKBlockGemm::NIterPerWarp * QKBlockGemm::KIterPerWarp;
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm1 =
+        PVBlockGemm::MIterPerWarp * PVBlockGemm::NIterPerWarp * PVBlockGemm::KIterPerWarp;
+
+    static constexpr bool kIsMasking = PipelineProblem::FmhaMask::IsMasking;
+};
+
+// ---------------------------------------------------------------------------
+// CoreLoopSchedulerDefaultBase: reusable phase helpers (bf16/fp16 pattern)
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem>
+struct CoreLoopSchedulerDefaultBase
+{
+    using Params = CoreLoopSchedulingParams<PipelineProblem>;
+
+    // Phase helper: GEMM0 compute (QK matmul) — MFMA interleaved with TRANS + VALU
+    CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
+    {
+        static_for<0, Params::kMfmaPerWarpGemm0, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 2, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        });
+    }
+
+    // Phase helper: GEMM1 compute (PV matmul) — optional packed-FP32 preamble + MFMA/VALU
+    CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
+    {
+#if !CK_TILE_DISABLE_PACKED_FP32
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+#endif
+        static_for<0, Params::kMfmaPerWarpGemm1, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+    }
+
+    // Phase helper: load phase (memory/LDS loads) — VALU + SALU
+    CK_TILE_DEVICE static constexpr void schedule_load_phase()
+    {
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 4, 0);
+    }
+
+    // Compose phases via WG0/WG1 phase-shift pattern:
+    //   WG0: compute0(P0), load(P1), compute1(P2), load(P3)
+    //   WG1: load(P0), compute0(P1), load(P2), compute1(P3)
     template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
     CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
                                                   ck_tile::number<Phase>)
     {
-        using namespace ck_tile;
+        // WG1 is shifted by 3 phases (equivalently, -1 mod 4) relative to WG0
+        constexpr ck_tile::index_t effective = (WaveGroup == 0) ? Phase : (Phase + 3) % 4;
 
-        if constexpr(WaveGroup == 0)
-        {
-            if constexpr(Phase == 0)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 2)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 3)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-        }
+        if constexpr(effective == 0)
+            schedule_gemm0_compute();
+        else if constexpr(effective == 2)
+            schedule_gemm1_compute();
         else
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 2)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 3)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-        }
+            schedule_load_phase();
     }
 };
 
-template <typename PipelineProblem>
-struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
-{
-    template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
-    CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
-                                                  ck_tile::number<Phase>)
-    {
-        using namespace ck_tile;
+// ---------------------------------------------------------------------------
+// CoreLoopSchedulerImpl: dtype-specialized dispatch
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem, typename QDataType, typename KDataType, typename VDataType>
+struct CoreLoopSchedulerImpl;
 
-        if constexpr(WaveGroup == 0)
-        {
-            if constexpr(Phase == 0)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 2)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 3)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-        }
-        else
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 2)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 3)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-        }
-    }
+// bf16 — uses default base
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::bf16_t, ck_tile::bf16_t, ck_tile::bf16_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+};
+
+// fp16 — uses default base
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::half_t, ck_tile::half_t, ck_tile::half_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+};
+
+// fp8 — uses default base (customize helpers here for fp8-specific scheduling)
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck_tile::fp8_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+};
+
+// ---------------------------------------------------------------------------
+// CoreLoopScheduler: user-facing template, delegates to dtype-specialized impl
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem>
+struct CoreLoopScheduler
+    : CoreLoopSchedulerImpl<PipelineProblem,
+                            typename PipelineProblem::QDataType,
+                            typename PipelineProblem::KDataType,
+                            typename PipelineProblem::VDataType>
+{
 };
 
 namespace detail {
@@ -1030,7 +994,7 @@ struct BlockFmhaFwdV3Pipeline
             auto memV = number<0>{};
             auto memK = number<1>{};
 
-            using Scheduler = CoreLoopScheduler<Problem, FmhaMask::IsMasking>;
+            using Scheduler = CoreLoopScheduler<Problem>;
 
             auto iteration = [&](auto pi) {
                 auto xdl_SP_p01_reg_idx = number<1>{} - pi;
