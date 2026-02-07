@@ -608,3 +608,69 @@ All located in `include/ck_tile/ops/fmha/pipeline/` and `include/ck_tile/ops/fmh
 4. **Update symbol maps** for any new C++ types
 
 5. **Regenerate**: `python generate.py --list_blobs ... && python generate.py --output_dir ...`
+
+## LLVM Scheduler Group Masks
+
+The `__builtin_amdgcn_sched_group_barrier(mask, count, flags)` intrinsic uses these masks:
+
+| Mask | Name | Instructions |
+|------|------|-------------|
+| `0x002` | VALU | Vector ALU (`v_add_f32`, `v_mul_f32`, `v_fma_f32`, `v_cmp_*`, `v_cndmask_*`, etc.) |
+| `0x004` | SALU | Scalar ALU (`s_add_i32`, `s_mov_b32`, etc.) |
+| `0x008` | MFMA | Matrix FMA (`v_mfma_f32_32x32x16_*`) |
+| `0x020` | VMEM_READ | Global memory reads (`buffer_load_*`) |
+| `0x040` | VMEM_WRITE | Global memory writes (`buffer_store_*`) |
+| `0x100` | DS_READ | LDS reads (`ds_read_*`, including `ds_read_b64_tr_b8` transpose reads) |
+| `0x200` | DS_WRITE | LDS writes (`ds_write_*`) |
+| `0x400` | TRANS | Transcendental unit (`v_exp_f32`, `v_log_f32`, `v_rcp_f32`, `v_rsq_f32`, `v_sqrt_f32`) |
+
+**Common mistake:** `ds_read_b64_tr_b8` (LDS transpose read) is a DS_READ operation (`0x100`), NOT a TRANS operation (`0x400`). TRANS refers to the transcendental/special-function unit in the VALU.
+
+The enum is defined in `include/ck_tile/core/arch/arch.hpp` as `LLVMSchedGroupMask`.
+
+## Assembly Verification for Refactoring
+
+When refactoring scheduling or pipeline code, verify the assembly is unchanged:
+
+### Method
+
+1. **Backup refactored source files** to a safe location before any git operations
+2. Build all variants with the refactored code, save `.s` files as "after"
+3. Revert only the refactoring (keep any bug fixes like mask corrections), rebuild, save `.s` as "before"
+4. Restore refactored source from backup
+5. Diff before/after
+
+### Key Details
+
+- **Must delete `aiter/jit/build/` directory** (not just `.so` files) for clean rebuilds — the build dir caches intermediate `.cpp` and `.s` files
+- **`__hip_cuid_*` hashes** are random per compilation unit per build — always differ and should be ignored
+- **Register renumbering** (e.g., `v156` → `v155`) is normal when scheduling changes; normalize with sed before diffing for structural comparison
+- **Normalized diff command:**
+  ```bash
+  sed 's/v\[[0-9]*:[0-9]*\]/vPAIR/g; s/s\[[0-9]*:[0-9]*\]/sPAIR/g; s/\bv[0-9]\+/vN/g; s/\bs[0-9]\+/sN/g' file.s
+  ```
+
+### V3 Assembly File Locations
+
+All dtypes (fp8, bf16, fp16) generate V3 pipeline variants on gfx950:
+```
+aiter/jit/build/mha_fwd_{dtype}_nbias_{n}mask_*/build/*trload_v3*gfx950-hip-amdgcn*.s
+```
+
+where `{dtype}` is `fp8bf16`, `bf16`, or `fp16`, and `{n}mask` is `nmask` (no mask) or `mask` (causal).
+
+### Triggering Builds for All Dtypes
+
+FP8: `python -m pytest op_tests/test_mha_fp8.py -k 'False-False or True-False' -x`
+
+BF16/FP16: Use a script calling `aiter.flash_attn_func()` with the appropriate dtype tensors and `causal=True/False`. See `op_tests/build_all_variants.py`.
+
+## Coding Standards
+
+- **No abbreviations in template parameters or variable names.** Use full, descriptive names. For example, use `PipelineProblem` instead of `PP`, `BlockGemm` instead of `BG`. Abbreviations hurt readability and make the code harder to understand for anyone unfamiliar with the codebase.
+
+## Git Submodule Notes
+
+- The CK submodule's `.git` is managed by the parent repo. Inside Docker containers, `git` commands may not work if the `.git` directory isn't mounted. Run git operations from the **host** instead.
+- **Always backup uncommitted files** before `git checkout` or `git stash`. Dropped stashes can sometimes be recovered via `git show <sha>` if the SHA was captured from terminal output, but this is unreliable.
+- `git stash` in the submodule stashes ALL modified files. To selectively revert, use `git checkout HEAD -- <file>` for specific files instead.
