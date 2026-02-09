@@ -38,6 +38,20 @@
 namespace ck_tile {
 
 // ---------------------------------------------------------------------------
+// block_gemm_mfma_count_v: number of hardware MFMA instructions issued per
+// warp in one full BlockGemm call.
+//
+//   warp gemm calls = MIterPerWarp * NIterPerWarp * KIterPerWarp
+//   MFMAs per call  = WarpGemm::kK / WarpGemm::WarpGemmAttribute::Impl::kK  (kKIter)
+//
+// For bf16/fp16 kKIter=1; for fp8 kKIter=2 (K=32 warp gemm wraps 2× K=16 MFMA).
+// ---------------------------------------------------------------------------
+template <typename BlockGemm>
+static constexpr ck_tile::index_t block_gemm_mfma_count_v =
+    BlockGemm::MIterPerWarp * BlockGemm::NIterPerWarp * BlockGemm::KIterPerWarp *
+    (BlockGemm::WarpGemm::kK / BlockGemm::WarpGemm::WarpGemmAttribute::Impl::kK);
+
+// ---------------------------------------------------------------------------
 // CoreLoopSchedulingParams: auto-derived instruction counts from tile/gemm config
 // ---------------------------------------------------------------------------
 template <typename PipelineProblem,
@@ -49,10 +63,8 @@ struct CoreLoopSchedulingParams
     using PVBlockGemm =
         ck_tile::remove_cvref_t<decltype(Policy::template GetPVBlockGemm<PipelineProblem>())>;
 
-    static constexpr ck_tile::index_t kMfmaPerWarpGemm0 =
-        QKBlockGemm::MIterPerWarp * QKBlockGemm::NIterPerWarp * QKBlockGemm::KIterPerWarp;
-    static constexpr ck_tile::index_t kMfmaPerWarpGemm1 =
-        PVBlockGemm::MIterPerWarp * PVBlockGemm::NIterPerWarp * PVBlockGemm::KIterPerWarp;
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm0 = block_gemm_mfma_count_v<QKBlockGemm>;
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm1 = block_gemm_mfma_count_v<PVBlockGemm>;
 
     static constexpr bool kIsMasking = PipelineProblem::FmhaMask::IsMasking;
 };
@@ -133,11 +145,77 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::half_t, ck_tile::half_t, 
 {
 };
 
-// fp8 — uses default base (customize helpers here for fp8-specific scheduling)
+// fp8 — asymmetric GEMM0 scheduling for 2× K iterations
+//
+// FP8 GEMM0 has 16 MFMAs (kKIter=2) but the same TRANS work as bf16/fp16 (softmax
+// exp count is dtype-independent).  The uniform (MFMA:1, TRANS:2, VALU:2) pattern
+// causes the compiler to front-load all 32 TRANS into MFMA #1, leaving MFMAs #2-8
+// with nothing to interleave (7 back-to-back MFMAs).
+//
+// Fix: split into two halves matching the natural K iteration boundary:
+//   K iter 0 (MFMAs 1-8):  TRANS-heavy — softmax exp + add reduction chain
+//   K iter 1 (MFMAs 9-16): VALU-heavy  — P scale + cvt_pk_fp8 + o_acc rescale
 template <typename PipelineProblem>
 struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck_tile::fp8_t>
     : CoreLoopSchedulerDefaultBase<PipelineProblem>
 {
+    using Base   = CoreLoopSchedulerDefaultBase<PipelineProblem>;
+    using Params = typename Base::Params;
+
+    CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
+    {
+        // K iter 0: 32 TRANS (v_exp_f32) + ~33 VALU (v_add reduction + permlane)
+        static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+        // K iter 1: ~58 VALU (v_mul scale + v_cvt_pk_fp8 + o_acc rescale)
+        static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 6, 0);
+        });
+    }
+
+    // Phase helper: GEMM1 compute (PV matmul) — asymmetric for fmha_alu0 data dependency
+    //
+    // fmha_alu0 runs during PV GEMM on the OTHER sp buffer:
+    //   v_perm (byte packing) + v_max3 (row max) + permlane + v_fma (sp_delta)
+    //
+    // The v_fma chain depends on the serial max3→permlane→max→mul chain, creating
+    // a data dependency gap around MFMAs 8-11.  Use a looser VALU constraint for the
+    // second half to give the scheduler freedom to place v_fma where available.
+    CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
+    {
+#if !CK_TILE_DISABLE_PACKED_FP32
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+#endif
+        // First half: v_perm + v_max3 + permlane chain (~29 VALU)
+        static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+        // Second half: v_fma chain (~33 VALU, data-dep limited at start)
+        static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 3, 0);
+        });
+    }
+
+    // Must override schedule() — static methods have no virtual dispatch
+    template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
+    CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
+                                                  ck_tile::number<Phase>)
+    {
+        constexpr ck_tile::index_t effective = (WaveGroup == 0) ? Phase : (Phase + 3) % 4;
+
+        if constexpr(effective == 0)
+            schedule_gemm0_compute();
+        else if constexpr(effective == 2)
+            schedule_gemm1_compute();
+        else
+            Base::schedule_load_phase();
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -916,14 +994,14 @@ struct BlockFmhaFwdV3Pipeline
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
             static_for<issued_D_reg_cnt, o_acc.thread_buf_.size(), 2>{}([&](auto idx) {
-                fp32x2_t input;
-                input.x = o_acc.thread_buf_[idx];
-                input.y = o_acc.thread_buf_[idx + 1];
+                    fp32x2_t input;
+                    input.x = o_acc.thread_buf_[idx];
+                    input.y = o_acc.thread_buf_[idx + 1];
 
-                auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
+                    auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
 
-                o_acc.thread_buf_[idx]     = output.x;
-                o_acc.thread_buf_[idx + 1] = output.y;
+                    o_acc.thread_buf_[idx]     = output.x;
+                    o_acc.thread_buf_[idx + 1] = output.y;
             });
         };
 
