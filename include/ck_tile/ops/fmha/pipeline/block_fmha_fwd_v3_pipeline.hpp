@@ -812,7 +812,8 @@ struct BlockFmhaFwdV3Pipeline
                     }
                 });
             });
-            /// TODO: move some fmha_alu1() code here if necessary
+            /// NOTE: moving exp2(sp_delta) here was explored and reverted (~1.1% regression).
+            /// See session.md for details.
         };
 
         auto fmha_alu1 = [&](auto sp_reg_idx) {
