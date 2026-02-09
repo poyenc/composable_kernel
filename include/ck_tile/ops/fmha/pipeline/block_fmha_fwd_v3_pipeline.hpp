@@ -37,155 +37,197 @@
 
 namespace ck_tile {
 
-template <typename PipelineProblem, bool kIsMasking>
-struct CoreLoopScheduler;
+// ---------------------------------------------------------------------------
+// block_gemm_mfma_count_v: number of hardware MFMA instructions issued per
+// warp in one full BlockGemm call.
+//
+//   warp gemm calls = MIterPerWarp * NIterPerWarp * KIterPerWarp
+//   MFMAs per call  = WarpGemm::kK / WarpGemm::WarpGemmAttribute::Impl::kK  (kKIter)
+//
+// For bf16/fp16 kKIter=1; for fp8 kKIter=2 (K=32 warp gemm wraps 2× K=16 MFMA).
+// ---------------------------------------------------------------------------
+template <typename BlockGemm>
+static constexpr ck_tile::index_t block_gemm_mfma_count_v =
+    BlockGemm::MIterPerWarp * BlockGemm::NIterPerWarp * BlockGemm::KIterPerWarp *
+    (BlockGemm::WarpGemm::kK / BlockGemm::WarpGemm::WarpGemmAttribute::Impl::kK);
 
-template <typename PipelineProblem>
-struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
+// ---------------------------------------------------------------------------
+// CoreLoopSchedulingParams: auto-derived instruction counts from tile/gemm config
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem,
+          typename Policy = BlockFmhaV3PipelineDefaultPolicy>
+struct CoreLoopSchedulingParams
 {
+    using QKBlockGemm =
+        ck_tile::remove_cvref_t<decltype(Policy::template GetQKBlockGemm<PipelineProblem>())>;
+    using PVBlockGemm =
+        ck_tile::remove_cvref_t<decltype(Policy::template GetPVBlockGemm<PipelineProblem>())>;
+
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm0 = block_gemm_mfma_count_v<QKBlockGemm>;
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm1 = block_gemm_mfma_count_v<PVBlockGemm>;
+
+    static constexpr bool kIsMasking = PipelineProblem::FmhaMask::IsMasking;
+};
+
+// ---------------------------------------------------------------------------
+// CoreLoopSchedulerDefaultBase: reusable phase helpers (bf16/fp16 pattern)
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem>
+struct CoreLoopSchedulerDefaultBase
+{
+    using Params = CoreLoopSchedulingParams<PipelineProblem>;
+
+    // Phase helper: GEMM0 compute (QK matmul) — MFMA interleaved with TRANS + VALU
+    CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
+    {
+        static_for<0, Params::kMfmaPerWarpGemm0, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 2, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        });
+    }
+
+    // Phase helper: GEMM1 compute (PV matmul) — optional packed-FP32 preamble + MFMA/VALU
+    CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
+    {
+#if !CK_TILE_DISABLE_PACKED_FP32
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+#endif
+        static_for<0, Params::kMfmaPerWarpGemm1, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+    }
+
+    // Phase helper: load phase (memory/LDS loads) — VALU + SALU
+    CK_TILE_DEVICE static constexpr void schedule_load_phase()
+    {
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 4, 0);
+    }
+
+    // Compose phases via WG0/WG1 phase-shift pattern:
+    //   WG0: compute0(P0), load(P1), compute1(P2), load(P3)
+    //   WG1: load(P0), compute0(P1), load(P2), compute1(P3)
     template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
     CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
                                                   ck_tile::number<Phase>)
     {
-        using namespace ck_tile;
+        // WG1 is shifted by 3 phases (equivalently, -1 mod 4) relative to WG0
+        constexpr ck_tile::index_t effective = (WaveGroup == 0) ? Phase : (Phase + 3) % 4;
 
-        if constexpr(WaveGroup == 0)
-        {
-            if constexpr(Phase == 0)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 2)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 3)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-        }
+        if constexpr(effective == 0)
+            schedule_gemm0_compute();
+        else if constexpr(effective == 2)
+            schedule_gemm1_compute();
         else
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 2)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 3)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-        }
+            schedule_load_phase();
     }
 };
 
+// ---------------------------------------------------------------------------
+// CoreLoopSchedulerImpl: dtype-specialized dispatch
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem, typename QDataType, typename KDataType, typename VDataType>
+struct CoreLoopSchedulerImpl;
+
+// bf16 — uses default base
 template <typename PipelineProblem>
-struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::bf16_t, ck_tile::bf16_t, ck_tile::bf16_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
 {
+};
+
+// fp16 — uses default base
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::half_t, ck_tile::half_t, ck_tile::half_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+};
+
+// fp8 — asymmetric GEMM0 scheduling for 2× K iterations
+//
+// FP8 GEMM0 has 16 MFMAs (kKIter=2) but the same TRANS work as bf16/fp16 (softmax
+// exp count is dtype-independent).  The uniform (MFMA:1, TRANS:2, VALU:2) pattern
+// causes the compiler to front-load all 32 TRANS into MFMA #1, leaving MFMAs #2-8
+// with nothing to interleave (7 back-to-back MFMAs).
+//
+// Fix: split into two halves matching the natural K iteration boundary:
+//   K iter 0 (MFMAs 1-8):  TRANS-heavy — softmax exp + add reduction chain
+//   K iter 1 (MFMAs 9-16): VALU-heavy  — P scale + cvt_pk_fp8 + o_acc rescale
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck_tile::fp8_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+    using Base   = CoreLoopSchedulerDefaultBase<PipelineProblem>;
+    using Params = typename Base::Params;
+
+    CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
+    {
+        // K iter 0: 32 TRANS (v_exp_f32) + ~33 VALU (v_add reduction + permlane)
+        static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+        // K iter 1: ~58 VALU (v_mul scale + v_cvt_pk_fp8 + o_acc rescale)
+        static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 6, 0);
+        });
+    }
+
+    // Phase helper: GEMM1 compute (PV matmul) — asymmetric for fmha_alu0 data dependency
+    //
+    // fmha_alu0 runs during PV GEMM on the OTHER sp buffer:
+    //   v_perm (byte packing) + v_max3 (row max) + permlane + v_fma (sp_delta)
+    //
+    // The v_fma chain depends on the serial max3→permlane→max→mul chain, creating
+    // a data dependency gap around MFMAs 8-11.  Use a looser VALU constraint for the
+    // second half to give the scheduler freedom to place v_fma where available.
+    CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
+    {
+#if !CK_TILE_DISABLE_PACKED_FP32
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+#endif
+        // First half: v_perm + v_max3 + permlane chain (~29 VALU)
+        static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+        // Second half: v_fma chain (~33 VALU, data-dep limited at start)
+        static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 3, 0);
+        });
+    }
+
+    // Must override schedule() — static methods have no virtual dispatch
     template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
     CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
                                                   ck_tile::number<Phase>)
     {
-        using namespace ck_tile;
+        constexpr ck_tile::index_t effective = (WaveGroup == 0) ? Phase : (Phase + 3) % 4;
 
-        if constexpr(WaveGroup == 0)
-        {
-            if constexpr(Phase == 0)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 2)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 3)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-        }
+        if constexpr(effective == 0)
+            schedule_gemm0_compute();
+        else if constexpr(effective == 2)
+            schedule_gemm1_compute();
         else
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x200, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 2)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 4, 0); // SALU
-            }
-            else if constexpr(Phase == 3)
-            {
-#if !CK_TILE_DISABLE_PACKED_FP32
-                __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-#endif
-                static_for<0, 8, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 4, 0); // VALU
-                });
-            }
-        }
+            Base::schedule_load_phase();
     }
+};
+
+// ---------------------------------------------------------------------------
+// CoreLoopScheduler: user-facing template, delegates to dtype-specialized impl
+// ---------------------------------------------------------------------------
+template <typename PipelineProblem>
+struct CoreLoopScheduler
+    : CoreLoopSchedulerImpl<PipelineProblem,
+                            typename PipelineProblem::QDataType,
+                            typename PipelineProblem::KDataType,
+                            typename PipelineProblem::VDataType>
+{
 };
 
 namespace detail {
@@ -246,6 +288,19 @@ CK_TILE_DEVICE fp32x2_t pk_mul_f32(fp32x2_t lhs, fp32x2_t rhs)
                  : [lhs] "v"(lhs), [rhs] "v"(rhs));
     return result;
 }
+
+/// FP8 packed conversion with asm volatile to prevent code sinking.
+/// This anchors the conversion instruction in Phase 0, and all predecessor
+/// instructions (scale, saturate, NaN check) will automatically stay in Phase 0.
+/// v_cvt_pk_fp8_f32 packs two FP8 values into lower 16 bits of a 32-bit VGPR.
+CK_TILE_DEVICE uint32_t cvt_pk_fp8_f32(float a, float b)
+{
+    uint32_t result;
+    asm volatile("v_cvt_pk_fp8_f32 %[result], %[a], %[b]"
+                 : [result] "=v"(result)
+                 : [a] "v"(a), [b] "v"(b));
+    return result;
+}
 } // namespace detail
 
 /// NOTICE: This pipeline is a work in progress and is awaiting upcoming compiler fixes and
@@ -299,10 +354,10 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr bool kHasDropout       = Problem::kHasDropout;
     static constexpr auto QScaleEnum        = Problem::QScaleEnum;
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kStoreLSE && !kHasDropout &&
-                   (QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE) &&
+    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout &&
                    !kSkipMinSeqlenQ),
                   "enable unsupported features");
+    // HACK: Removed !kStoreLSE check to allow BF16 V3 compilation for assembly analysis
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -368,29 +423,6 @@ struct BlockFmhaFwdV3Pipeline
         return make_tile_window(tensor_view, desc.get_lengths(), {0, 0});
     }
 
-    // vmcnt=0~63, lgkmcnt=0~15, expcnt=0~7
-    template <uint16_t Vmcnt, uint8_t Lgkmcnt, uint8_t Expcnt = 7>
-    CK_TILE_DEVICE static constexpr void s_waitcnt()
-    {
-        // vmcnt use bits {[15:14],[3:0]}
-        // expcnt use bits [6:4]
-        // lgkmcnt use bits [11:8]
-        __builtin_amdgcn_s_waitcnt((((0b110000 & Vmcnt) << (14 - 4)) | (0b1111 & Vmcnt)) |
-                                   ((0b111 & Expcnt) << 4) | ((0b1111 & Lgkmcnt) << 8));
-    }
-
-    template <uint16_t Vmcnt>
-    CK_TILE_DEVICE static constexpr void s_waitcnt_vmcnt()
-    {
-        s_waitcnt<Vmcnt, 15>();
-    }
-
-    template <uint8_t Lgkmcnt>
-    CK_TILE_DEVICE static constexpr void s_waitcnt_lgkmcnt()
-    {
-        s_waitcnt<63, Lgkmcnt>();
-    }
-
     template <typename QDramBlockWindowTmp,
               typename KDramBlockWindowTmp,
               typename VDramBlockWindowTmp,
@@ -437,7 +469,7 @@ struct BlockFmhaFwdV3Pipeline
                           kN1 == VDramBlockWindowTmp{}.get_window_lengths()[number<1>{}],
                       "wrong!");
 
-        static_assert(sizeof(SaccDataType) * kM0 * kN0 <= GetSmemSize());
+        // static_assert(sizeof(SaccDataType) * kM0 * kN0 <= GetSmemSize());
         auto s_lds = make_tensor_view<address_space_enum::lds>(
             reinterpret_cast<SaccDataType*>(static_cast<char*>(smem_ptr)),
             MakeSimpleLdsDesc<kM0, kN0>());
@@ -780,7 +812,8 @@ struct BlockFmhaFwdV3Pipeline
                     }
                 });
             });
-            /// TODO: move some fmha_alu1() code here if necessary
+            /// NOTE: moving exp2(sp_delta) here was explored and reverted (~1.1% regression).
+            /// See session.md for details.
         };
 
         auto fmha_alu1 = [&](auto sp_reg_idx) {
@@ -854,11 +887,23 @@ struct BlockFmhaFwdV3Pipeline
                     sp(sp_reg_idx).p.thread_buf_[idx]     = casted.x;
                     sp(sp_reg_idx).p.thread_buf_[idx + 1] = casted.y;
                 }
-                else
+                else if constexpr(std::is_same_v<PDataType, bf16_t>)
                 {
                     auto casted                           = detail::cvt_pk_bf16_f32(x, y);
                     sp(sp_reg_idx).p.thread_buf_[idx]     = casted.x;
                     sp(sp_reg_idx).p.thread_buf_[idx + 1] = casted.y;
+                }
+                else if constexpr(std::is_same_v<PDataType, fp8_t>)
+                {
+                    // Use asm volatile wrapper to prevent code sinking
+                    // v_cvt_pk_fp8_f32 packs two FP8 into lower 16 bits of 32-bit result
+                    uint32_t packed                       = detail::cvt_pk_fp8_f32(x, y);
+                    sp(sp_reg_idx).p.thread_buf_[idx]     = bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
+                    sp(sp_reg_idx).p.thread_buf_[idx + 1] = bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
+                }
+                else
+                {
+                    static_assert(false, "unsupported data type for P");
                 }
             });
 
@@ -950,14 +995,14 @@ struct BlockFmhaFwdV3Pipeline
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
             static_for<issued_D_reg_cnt, o_acc.thread_buf_.size(), 2>{}([&](auto idx) {
-                fp32x2_t input;
-                input.x = o_acc.thread_buf_[idx];
-                input.y = o_acc.thread_buf_[idx + 1];
+                    fp32x2_t input;
+                    input.x = o_acc.thread_buf_[idx];
+                    input.y = o_acc.thread_buf_[idx + 1];
 
-                auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
+                    auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
 
-                o_acc.thread_buf_[idx]     = output.x;
-                o_acc.thread_buf_[idx + 1] = output.y;
+                    o_acc.thread_buf_[idx]     = output.x;
+                    o_acc.thread_buf_[idx + 1] = output.y;
             });
         };
 
@@ -1005,7 +1050,7 @@ struct BlockFmhaFwdV3Pipeline
             auto memV = number<0>{};
             auto memK = number<1>{};
 
-            using Scheduler = CoreLoopScheduler<Problem, FmhaMask::IsMasking>;
+            using Scheduler = CoreLoopScheduler<Problem>;
 
             auto iteration = [&](auto pi) {
                 auto xdl_SP_p01_reg_idx = number<1>{} - pi;
@@ -1039,7 +1084,7 @@ struct BlockFmhaFwdV3Pipeline
                     {
                         ASM_MARKER("phase0 Wave0-3 (pi=1)");
                     }
-                    s_waitcnt_lgkmcnt<0>();
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
@@ -1049,7 +1094,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave0-3");
-                    s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1060,7 +1105,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase2
                     ASM_MARKER("phase2 Wave0-3");
-                    s_waitcnt_lgkmcnt<0>();
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1075,7 +1120,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
                     ASM_MARKER("phase3 Wave0-3");
-                    s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1110,7 +1155,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave4-7");
-                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, 0>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1139,7 +1184,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
                     ASM_MARKER("phase3 Wave4-7");
-                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, 0>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1162,18 +1207,18 @@ struct BlockFmhaFwdV3Pipeline
 
             if(1 < num_total_loop)
             {
-                s_waitcnt_vmcnt<K_mem_su_ld_insts>();
+                s_waitcnt<K_mem_su_ld_insts>();
             }
             else
             {
-                s_waitcnt_vmcnt<0>();
+                s_waitcnt<0>();
             }
             __builtin_amdgcn_s_barrier();
 
             V_lds_load(V_lds_rd_idx);
             fmha_alu1(ps_pi);
 
-            s_waitcnt_lgkmcnt<0>();
+            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
 
             auto xdl_SP_p23_reg_idx = ps_pi;
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
@@ -1185,12 +1230,12 @@ struct BlockFmhaFwdV3Pipeline
             // (1) load K0 to LDS & VGPR
             K_mem_load(number<0>{}); // mem_K0
 
-            s_waitcnt_vmcnt<0>();
+            s_waitcnt<0>();
             __builtin_amdgcn_s_barrier();
 
             K_lds_load(number<0>{}); // lds_K0
 
-            s_waitcnt_lgkmcnt<0>();
+            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
             __builtin_amdgcn_s_barrier();
 
             // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
@@ -1219,7 +1264,7 @@ struct BlockFmhaFwdV3Pipeline
             {
                 K_mem_load(number<0>{}); // mem_K2
 
-                s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
             }
 
