@@ -88,6 +88,7 @@ using fmha_traits = ck_tile::TileFmhaTraits<{F_spad},
                                             {F_skip},
                                             {F_sink}>;
 
+
 using fmha_variant = ck_tile::ComposedAttention<{F_logits} * ck_tile::LOGITS_SOFT_CAP, CK_TILE_FMHA_FWD_FAST_EXP2>;
 
 using fmha_mask = {F_mask};
@@ -809,6 +810,11 @@ class CompatibilityRuleFactory:
                     False
             return True
 
+        all_mask_keys = list(get_mask_map("simplified").keys()) + list(
+            get_mask_map("generic").keys()
+        )
+        no_mask_keys = [mask_key for mask_key in all_mask_keys if "no" in mask_key]
+
         def check_feature(
             problem_ctx: ProblemContext, kernel_ctx: KernelContext
         ) -> bool:
@@ -821,6 +827,13 @@ class CompatibilityRuleFactory:
                 or kernel_ctx.pipeline.F_logits == "f"
             ):
                 return False
+            # sink_size is only meaningful when no masking is applied
+            if (
+                kernel_ctx.pipeline.F_mask in no_mask_keys
+                and kernel_ctx.pipeline.F_sink == "t"
+            ):
+                return False
+
             return True
 
         return [check_mode, check_hdim, check_feature]
@@ -1053,7 +1066,7 @@ class KernelComponentFactoryGfx950(
             # add tile for qr_async_trload_v3
             if (128, 128) in result.keys():
                 result[(128, 128)].append(
-                    FmhaFwdTileSize(256, 32, 128, 128, 32, 128,  8, 1, 1,  8, 1, 1,  32, 32, 16,  32, 32, 16,  -1))  # fmt: skip
+                    FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 16,  32, 32, 16,  -1))  # fmt: skip
         return result
 
     @classmethod
@@ -1065,6 +1078,7 @@ class KernelComponentFactoryGfx950(
         )
         if dtype in cls._DT_FP16_BF16:
             qscale = "no"
+            """
             for logits, mask, bias, lse, dropout, skip, sink in itertools.product(
                 ["t", "f"],
                 get_mask_map(mask_impl).keys(),
@@ -1083,7 +1097,7 @@ class KernelComponentFactoryGfx950(
                 ):
                     pipelines.append(FmhaFwdPipeline("qr_async_trload", "row", "f", "f", "f", "f", logits, bias, lse, dropout, qscale, mask, skip, "t", sink))  # fmt: skip
                     pipelines.append(FmhaFwdPipeline("qr_async_trload", "row", "f", "f", "t", "t", logits, bias, lse, dropout, qscale, mask, skip, "t", sink))  # fmt: skip
-
+            """
             # qr_async_trload_v3 only supports hdim=hdim_v=128 for now
             if (hdim, hdim_v) == (128, 128):
                 # qr_async_trload_v3 only supports (generic) causal mask
