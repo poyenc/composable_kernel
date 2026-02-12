@@ -142,8 +142,8 @@ struct BlockFmhaV3PipelineDefaultPolicy
 
         // Swap NumWarps and LaneGroups to store V in non-swizzled layout in LDS
         constexpr index_t N0 = NumIssues;
-        constexpr index_t N1 = NumWarps;    // was LaneGroups
-        constexpr index_t N2 = LaneGroups;  // was NumWarps
+        constexpr index_t N1 = NumWarps;   // was LaneGroups
+        constexpr index_t N2 = LaneGroups; // was NumWarps
         constexpr index_t K0 = LanesPerK;
         constexpr index_t K1 = KVector;
 
@@ -332,7 +332,6 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NumWarps   = Problem::BlockFmhaShape::NumWarps;
         constexpr index_t WarpSize   = ck_tile::get_warp_size();
 
-        [[maybe_unused]] constexpr index_t KPack = GetSmemKPackK<Problem>(); // this is for lds
         constexpr index_t KVector = GetAlignmentK<Problem>(); // this is for global load
         constexpr index_t kPad =
             kKLdsPadInBytes /
@@ -480,7 +479,6 @@ struct BlockFmhaV3PipelineDefaultPolicy
         constexpr index_t NumWarps   = Problem::BlockFmhaShape::NumWarps;
         constexpr index_t WarpSize   = ck_tile::get_warp_size();
 
-        [[maybe_unused]] constexpr index_t KPack = GetSmemVPackK<Problem>(); // this is for lds
         constexpr index_t KVector = GetAlignmentV<Problem>(); // this is for global load
         constexpr index_t kPad =
             kVLdsPadInBytes /
