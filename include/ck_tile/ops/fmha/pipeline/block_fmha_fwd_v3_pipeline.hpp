@@ -24,17 +24,6 @@
 #define CK_TILE_DISABLE_PACKED_FP32 0
 #endif
 
-#define WARP_ID 0
-#define LANE_ID 0
-
-#define ENABLE_DEBUG_STMTS 1
-#if ENABLE_DEBUG_STMTS
-#define DEBUG_STMTS \
-    if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == LANE_ID)
-#else
-#define DEBUG_STMTS if constexpr(false)
-#endif
-
 namespace ck_tile {
 
 // ---------------------------------------------------------------------------
@@ -54,8 +43,7 @@ static constexpr ck_tile::index_t block_gemm_mfma_count_v =
 // ---------------------------------------------------------------------------
 // CoreLoopSchedulingParams: auto-derived instruction counts from tile/gemm config
 // ---------------------------------------------------------------------------
-template <typename PipelineProblem,
-          typename Policy = BlockFmhaV3PipelineDefaultPolicy>
+template <typename PipelineProblem, typename Policy = BlockFmhaV3PipelineDefaultPolicy>
 struct CoreLoopSchedulingParams
 {
     using QKBlockGemm =
@@ -222,11 +210,10 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck
 // CoreLoopScheduler: user-facing template, delegates to dtype-specialized impl
 // ---------------------------------------------------------------------------
 template <typename PipelineProblem>
-struct CoreLoopScheduler
-    : CoreLoopSchedulerImpl<PipelineProblem,
-                            typename PipelineProblem::QDataType,
-                            typename PipelineProblem::KDataType,
-                            typename PipelineProblem::VDataType>
+struct CoreLoopScheduler : CoreLoopSchedulerImpl<PipelineProblem,
+                                                 typename PipelineProblem::QDataType,
+                                                 typename PipelineProblem::KDataType,
+                                                 typename PipelineProblem::VDataType>
 {
 };
 
@@ -354,8 +341,7 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr bool kHasDropout       = Problem::kHasDropout;
     static constexpr auto QScaleEnum        = Problem::QScaleEnum;
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout &&
-                   !kSkipMinSeqlenQ),
+    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout && !kSkipMinSeqlenQ),
                   "enable unsupported features");
     // HACK: Removed !kStoreLSE check to allow BF16 V3 compilation for assembly analysis
 
@@ -386,31 +372,6 @@ struct BlockFmhaFwdV3Pipeline
         return ck_tile::max(kM0 * kN1 * sizeof(PDataType),
                             Policy::template GetSmemSize<Problem>() +
                                 kM0 * kN0 * sizeof(PDataType));
-    }
-
-    // for debug only
-    template <ck_tile::index_t MPerBlock, ck_tile::index_t NPerBlock>
-    CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc()
-    {
-        using namespace ck_tile;
-        constexpr auto lds_block_desc =
-            make_naive_tensor_descriptor(make_tuple(number<MPerBlock>{}, number<NPerBlock>{}),
-                                         make_tuple(number<NPerBlock>{}, number<1>{}),
-                                         number<1>{},
-                                         number<1>{});
-
-        return lds_block_desc;
-    }
-
-    // for debug only
-    template <ck_tile::index_t MPerBlock>
-    CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc1D()
-    {
-        using namespace ck_tile;
-        constexpr auto lds_block_desc = make_naive_tensor_descriptor(
-            make_tuple(number<MPerBlock>{}), make_tuple(number<1>{}), number<1>{}, number<1>{});
-
-        return lds_block_desc;
     }
 
     template <typename DataType, typename Descriptor>
@@ -468,33 +429,6 @@ struct BlockFmhaFwdV3Pipeline
                           kK1 == VDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
                           kN1 == VDramBlockWindowTmp{}.get_window_lengths()[number<1>{}],
                       "wrong!");
-
-        // static_assert(sizeof(SaccDataType) * kM0 * kN0 <= GetSmemSize());
-        auto s_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<SaccDataType*>(static_cast<char*>(smem_ptr)),
-            MakeSimpleLdsDesc<kM0, kN0>());
-        [[maybe_unused]] auto s_lds_window =
-            make_tile_window(s_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
-
-        auto p_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<PDataType*>(static_cast<char*>(smem_ptr) +
-                                         Policy::template GetSmemSize<Problem>()),
-            MakeSimpleLdsDesc<kM0, kN0>());
-        [[maybe_unused]] auto p_lds_window =
-            make_tile_window(p_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
-
-        auto o_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<PDataType*>(static_cast<char*>(smem_ptr)),
-            MakeSimpleLdsDesc<kM0, kN1>());
-        [[maybe_unused]] auto o_lds_window =
-            make_tile_window(o_lds, make_tuple(number<kM0>{}, number<kN1>{}), {0, 0});
-
-        auto m_lds = make_tensor_view<address_space_enum::lds>(
-            reinterpret_cast<SMPLComputeDataType*>(static_cast<char*>(smem_ptr) +
-                                                   Policy::template GetSmemSize<Problem>()),
-            MakeSimpleLdsDesc1D<kM0>());
-        [[maybe_unused]] auto m_lds_window =
-            make_tile_window(m_lds, make_tuple(number<kM0>{}), {0});
 
         const index_t warp_group_id = get_warp_id() / 4;
 
@@ -651,79 +585,6 @@ struct BlockFmhaFwdV3Pipeline
 
         constexpr index_t NumWarpGroups = Problem::kBlockSize / Policy::NumThreadPerWarpGroup;
         static_assert(NumWarpGroups == 2);
-
-        [[maybe_unused]] auto print_dist_tensor = [&](const auto& dist_tensor, const char* name) {
-            printf("[POYENC] %s (size=%d): %5.2f",
-                   name,
-                   decltype(dist_tensor.thread_buf_)::size(),
-                   ck_tile::type_convert<float>(dist_tensor.thread_buf_[0]));
-            static_for<1, decltype(dist_tensor.thread_buf_)::size(), 1>{}([&](auto i) {
-                printf(", %5.2f", ck_tile::type_convert<float>(dist_tensor.thread_buf_[i]));
-            });
-            printf("\n");
-        };
-
-        [[maybe_unused]] auto print_lds = [&](auto lds_tile_window, const char* name) {
-            const auto num_rows = lds_tile_window.get_window_lengths().at(number<0>{});
-            const auto num_cols = lds_tile_window.get_window_lengths().at(number<1>{});
-
-            auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
-            auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
-
-            if constexpr(true || num_rows < num_cols)
-            {
-                for(int row = 0; row < num_rows; ++row)
-                {
-                    int offset = desc.calculate_offset(make_tuple(row, 0));
-                    printf("[DEVICE] %s[%3d] = %5.2f",
-                           name,
-                           row,
-                           ck_tile::type_convert<float>(data[offset]));
-                    for(int col = 1; col < num_cols; ++col)
-                    {
-                        printf(", ");
-                        offset = desc.calculate_offset(make_tuple(row, col));
-                        printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
-                    }
-                    printf("\n");
-                }
-            }
-            else
-            {
-                for(int col = 0; col < num_cols; ++col)
-                {
-                    int offset = desc.calculate_offset(make_tuple(0, col));
-                    printf("[DEVICE] %s[%3d] = %5.2f",
-                           name,
-                           col,
-                           ck_tile::type_convert<float>(data[offset]));
-                    for(int row = 1; row < num_rows; ++row)
-                    {
-                        printf(", ");
-                        offset = desc.calculate_offset(make_tuple(row, col));
-                        printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
-                    }
-                    printf("\n");
-                }
-            }
-        };
-
-        [[maybe_unused]] auto print_lds_1d = [&](auto lds_tile_window, const char* name) {
-            const auto num_elems = lds_tile_window.get_window_lengths().at(number<0>{});
-
-            auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
-            auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
-
-            int offset = desc.calculate_offset(make_tuple(0));
-            printf("[DEVICE] %s = %5.2f", name, ck_tile::type_convert<float>(data[offset]));
-            for(int e = 1; e < num_elems; ++e)
-            {
-                printf(", ");
-                offset = desc.calculate_offset(make_tuple(e));
-                printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
-            }
-            printf("\n");
-        };
 
         // K_mem_su_ld_insts = 1 for 32 x 128
         // V_mem_su_ld_insts = 1 for 128 x 32
@@ -897,9 +758,11 @@ struct BlockFmhaFwdV3Pipeline
                 {
                     // Use asm volatile wrapper to prevent code sinking
                     // v_cvt_pk_fp8_f32 packs two FP8 into lower 16 bits of 32-bit result
-                    uint32_t packed                       = detail::cvt_pk_fp8_f32(x, y);
-                    sp(sp_reg_idx).p.thread_buf_[idx]     = bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
-                    sp(sp_reg_idx).p.thread_buf_[idx + 1] = bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
+                    uint32_t packed = detail::cvt_pk_fp8_f32(x, y);
+                    sp(sp_reg_idx).p.thread_buf_[idx] =
+                        bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
+                    sp(sp_reg_idx).p.thread_buf_[idx + 1] =
+                        bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
                 }
                 else
                 {
@@ -995,14 +858,14 @@ struct BlockFmhaFwdV3Pipeline
             /// should be placed at the end of a phase.
             // update partial o_acc after [issued_D_reg_cnt]
             static_for<issued_D_reg_cnt, o_acc.thread_buf_.size(), 2>{}([&](auto idx) {
-                    fp32x2_t input;
-                    input.x = o_acc.thread_buf_[idx];
-                    input.y = o_acc.thread_buf_[idx + 1];
+                fp32x2_t input;
+                input.x = o_acc.thread_buf_[idx];
+                input.y = o_acc.thread_buf_[idx + 1];
 
-                    auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
+                auto output = detail::pk_mul_f32(input, pk_o_acc_scale);
 
-                    o_acc.thread_buf_[idx]     = output.x;
-                    o_acc.thread_buf_[idx + 1] = output.y;
+                o_acc.thread_buf_[idx]     = output.x;
+                o_acc.thread_buf_[idx + 1] = output.y;
             });
         };
 
