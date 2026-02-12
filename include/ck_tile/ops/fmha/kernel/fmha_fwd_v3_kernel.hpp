@@ -8,143 +8,7 @@
 #include "ck_tile/ops/fmha/block/block_masking.hpp"
 #include "ck_tile/ops/fmha/block/variants.hpp"
 
-#include <type_traits>
-#include <utility>
-
-#if !defined(CK_TILE_REMAP_TOKEN_USING_DESC)
-#define CK_TILE_REMAP_TOKEN_USING_DESC 1
-#endif
-
 namespace ck_tile {
-
-template <typename T>
-constexpr T swap_bit_positions(T x, unsigned p, unsigned q)
-{
-    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
-
-    T bitp = (x >> p) & T(1);
-    T bitq = (x >> q) & T(1);
-
-    T mask = ((T(1) << p) | (T(1) << q));
-    x &= ~mask;
-
-    x |= (bitp << q) | (bitq << p);
-    return x;
-}
-
-template <typename T>
-constexpr T permute_bits_5(T x)
-{
-    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
-
-    T b0 = (x >> 0) & 1u;
-    T b1 = (x >> 1) & 1u;
-    T b2 = (x >> 2) & 1u;
-    T b3 = (x >> 3) & 1u;
-    T b4 = (x >> 4) & 1u;
-
-    T y = (b2 << 4) | (b1 << 3) | (b0 << 2) | (b4 << 1) | b3;
-
-    return (x & ~T(31)) | y;
-}
-
-template <typename T>
-constexpr T inverse_permute_bits_5(T x)
-{
-    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
-
-    T y  = x & 31u;
-    T c4 = (y >> 4) & 1u;
-    T c3 = (y >> 3) & 1u;
-    T c2 = (y >> 2) & 1u;
-    T c1 = (y >> 1) & 1u;
-    T c0 = (y >> 0) & 1u;
-
-    T orig = (c1 << 4) | (c0 << 3) | (c4 << 2) | (c3 << 1) | c2;
-    return (x & ~T(31)) | orig;
-}
-
-template <typename T>
-constexpr T key_token_remap(T x)
-{
-#if 0
-    static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
-    const T lo = x & T(63);
-    const T hi = x & ~T(63);
-
-    T y = (lo & T(0x01))           // in0 -> out0
-          | ((lo & T(0x08)) >> 2)  // in3 -> out1
-          | ((lo & T(0x02)) << 1)  // in1 -> out2
-          | ((lo & T(0x10)) >> 1)  // in4 -> out3
-          | ((lo & T(0x20)) >> 1)  // in5 -> out4
-          | ((lo & T(0x04)) << 3); // in2 -> out5
-
-    return hi | y;
-#else
-    return x;
-#endif
-}
-
-template <typename T>
-constexpr T inverse_key_token_remap(T y)
-{
-#if 0
-    static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
-    const T lo = y & T(63);
-    const T hi = y & ~T(63);
-
-    T x = (lo & T(0x01))           // out0 -> in0
-          | ((lo & T(0x04)) >> 1)  // out2 -> in1
-          | ((lo & T(0x20)) >> 3)  // out5 -> in2
-          | ((lo & T(0x02)) << 2)  // out1 -> in3
-          | ((lo & T(0x08)) << 1)  // out3 -> in4
-          | ((lo & T(0x10)) << 1); // out4 -> in5
-
-    return hi | x;
-#else
-    return y;
-#endif
-}
-
-template <typename T>
-constexpr T value_token_remap(T x)
-{
-#if 0
-    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
-    const T lo = x & T(31);
-    const T hi = x & ~T(31);
-
-    T ylo = (lo & T(0x01))          // x0 -> y0
-            | ((lo & T(0x08)) >> 2) // x3 -> y1
-            | ((lo & T(0x02)) << 1) // x1 -> y2
-            | ((lo & T(0x04)) << 1) // x2 -> y3
-            | (lo & T(0x10));       // x4 -> y4
-
-    return hi | ylo;
-#else
-    return x;
-#endif
-}
-
-template <typename T>
-constexpr T inverse_value_token_remap(T y)
-{
-#if 0
-    static_assert(std::is_unsigned_v<T>, "T must be unsigned");
-    const T lo = y & T(31);
-    const T hi = y & ~T(31);
-
-    T xlo = (lo & T(0x01))          // y0 -> x0
-            | ((lo & T(0x04)) >> 1) // y2 -> x1
-            | ((lo & T(0x08)) >> 1) // y3 -> x2
-            | ((lo & T(0x02)) << 2) // y1 -> x3
-            | (lo & T(0x10));       // y4 -> x4
-
-    return hi | xlo;
-#else
-    return y;
-#endif
-}
 
 /// NOTICE: This kernel is a work in progress and is awaiting upcoming compiler fixes and
 /// instruction scheduling optimizations.
@@ -216,7 +80,6 @@ struct FmhaFwdV3Kernel
 
     struct FmhaFwdMaskKargs
     {
-        // ck_tile::index_t window_size_left, window_size_right;
         ck_tile::index_t window_size_left, window_size_right;
         ck_tile::GenericAttentionMaskEnum mask_type;
         ck_tile::index_t remap_opt;
@@ -647,69 +510,6 @@ struct FmhaFwdV3Kernel
             batch_offset_o = static_cast<long_index_t>(i_batch) * kargs.batch_stride_o;
         }
 
-        // We add key offset to the base address for each thread here
-        index_t thread_key_token_offset = 0;
-        {
-            constexpr index_t kVectorSize =
-                FmhaPipeline::Policy::template GetAlignmentK<typename FmhaPipeline::Problem>();
-            if constexpr(FmhaPipeline::kN0 == 32)
-            {
-                static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize == kVectorSize);
-            }
-            else if constexpr(FmhaPipeline::kN0 == 64)
-            {
-                static_assert(FmhaPipeline::kN0 * FmhaPipeline::kK0 / kBlockSize ==
-                              2 * kVectorSize);
-            }
-            else
-            {
-                static_assert(false, "unsupported kN0");
-            }
-#if !CK_TILE_REMAP_TOKEN_USING_DESC
-            constexpr index_t KThreadPerBlock = FmhaPipeline::kK0 / kVectorSize;
-
-            // Make sure that a thread must read data from the same key token
-            // and the calculation of old_key_offset should match the MakeKDramTileDistribution()
-            index_t old_key_offset = get_thread_local_1d_id() / KThreadPerBlock;
-            index_t new_key_offset =
-                bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(old_key_offset)));
-
-            thread_key_token_offset = new_key_offset - old_key_offset;
-            batch_offset_k += thread_key_token_offset * kargs.stride_k;
-#endif
-        }
-        // We add value offset to the base address for each thread here
-        index_t thread_value_token_offset = 0;
-        {
-            constexpr index_t kVectorSize =
-                FmhaPipeline::Policy::template GetAlignmentV<typename FmhaPipeline::Problem>();
-            if constexpr(FmhaPipeline::kK1 == 32)
-            {
-                static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize == kVectorSize);
-            }
-            else if constexpr(FmhaPipeline::kK1 == 64)
-            {
-                static_assert(FmhaPipeline::kN1 * FmhaPipeline::kK1 / kBlockSize ==
-                              2 * kVectorSize);
-            }
-            else
-            {
-                static_assert(false, "unsupported kK1");
-            }
-#if !CK_TILE_REMAP_TOKEN_USING_DESC
-            constexpr index_t NThreadPerBlock = FmhaPipeline::kN1 / kVectorSize;
-
-            // Make sure that a thread must read data from the same value token
-            // and the calculation of old_value_offset should match the MakeVDramTileDistribution()
-            index_t old_value_offset = get_thread_local_1d_id() / NThreadPerBlock;
-            index_t new_value_offset =
-                bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(old_value_offset)));
-
-            thread_value_token_offset = new_value_offset - old_value_offset;
-            batch_offset_v += thread_value_token_offset * kargs.stride_k;
-#endif
-        }
-
         // for simplicity, batch stride we just modify the pointer
         const QDataType* q_ptr = reinterpret_cast<const QDataType*>(kargs.q_ptr) +
                                  static_cast<long_index_t>(i_nhead) * kargs.nhead_stride_q +
@@ -740,77 +540,32 @@ struct FmhaFwdV3Kernel
                 make_tuple(number<FmhaPipeline::kM0>{}, number<FmhaPipeline::kSubQKHeaddim>{}),
                 sequence<kPadSeqLenQ, kPadHeadDimQ>{});
         }();
+        static_assert(FmhaPipeline::kN0 == 64, "only kN0 == 64 is supported");
+        static_assert(FmhaPipeline::kK1 == 64, "only kK1 == 64 is supported");
+
         const auto k_dram = [&]() {
             const auto k_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 k_ptr,
-                make_tuple(kargs.seqlen_k - thread_key_token_offset, kargs.hdim_q),
+                make_tuple(kargs.seqlen_k, kargs.hdim_q),
                 make_tuple(kargs.stride_k, 1),
                 number<FmhaPipeline::kAlignmentK>{},
                 number<1>{});
 
-            auto k_dram_transformed = transform_tensor_view(
-                k_dram_naive,
-                make_tuple(
-                    make_functor_transform(
-                        [](auto idx) {
-#if CK_TILE_REMAP_TOKEN_USING_DESC
-                            if constexpr(FmhaPipeline::kN0 == 32)
-                            {
-                                return bit_cast<index_t>(permute_bits_5(bit_cast<uint32_t>(idx)));
-                            }
-                            else
-                            {
-                                return bit_cast<index_t>(key_token_remap(bit_cast<uint32_t>(idx)));
-                            }
-#else
-                            return idx;
-#endif
-                        },
-                        kargs.seqlen_k - thread_key_token_offset),
-                    make_pass_through_transform(kargs.hdim_q)),
-                make_tuple(sequence<0>{}, sequence<1>{}),
-                make_tuple(sequence<0>{}, sequence<1>{}));
-
             return pad_tensor_view(
-                k_dram_transformed,
+                k_dram_naive,
                 make_tuple(number<FmhaPipeline::kN0>{}, number<FmhaPipeline::kK0>{}),
                 sequence<kPadSeqLenK, kPadHeadDimQ>{});
         }();
         const auto v_dram = [&]() {
             const auto v_dram_naive = make_naive_tensor_view<address_space_enum::global>(
                 v_ptr,
-                make_tuple(kargs.seqlen_k - thread_value_token_offset, kargs.hdim_v),
+                make_tuple(kargs.seqlen_k, kargs.hdim_v),
                 make_tuple(kargs.stride_v, 1),
                 number<FmhaPipeline::kAlignmentV>{},
                 number<1>{});
 
-            auto v_dram_transformed = transform_tensor_view(
-                v_dram_naive,
-                make_tuple(make_functor_transform(
-                               [](auto idx) {
-#if CK_TILE_REMAP_TOKEN_USING_DESC
-                                   if constexpr(FmhaPipeline::kK1 == 32)
-                                   {
-                                       return bit_cast<index_t>(
-                                           permute_bits_5(bit_cast<uint32_t>(idx)));
-                                   }
-                                   else
-                                   {
-                                       return bit_cast<index_t>(
-                                           value_token_remap(bit_cast<uint32_t>(idx)));
-                                       ;
-                                   }
-#else
-                                   return idx;
-#endif
-                               },
-                               kargs.seqlen_k - thread_value_token_offset),
-                           make_pass_through_transform(kargs.hdim_v)),
-                make_tuple(sequence<0>{}, sequence<1>{}),
-                make_tuple(sequence<0>{}, sequence<1>{}));
-
             return pad_tensor_view(
-                v_dram_transformed,
+                v_dram_naive,
                 make_tuple(number<FmhaPipeline::kK1>{}, number<FmhaPipeline::kN1>{}),
                 sequence<kPadSeqLenK, kPadHeadDimV>{});
         }();

@@ -21,208 +21,102 @@
 
 #define ADD_SBARRIER_FOR_PHASE0 1
 
-#define WARP_ID 0
-#define LANE_ID 0
-
-#define ENABLE_DEBUG_STMTS 1
-#if ENABLE_DEBUG_STMTS
-#define DEBUG_STMTS \
-    if(get_block_1d_id() == 0 && get_warp_id() == WARP_ID && get_lane_id() == LANE_ID)
-#else
-#define DEBUG_STMTS if constexpr(false)
-#endif
-
 namespace ck_tile {
 
-template <typename PipelineProblem, bool kIsMasking>
-struct CoreLoopScheduler;
+template <typename BlockGemm>
+static constexpr ck_tile::index_t block_gemm_mfma_count_v =
+    BlockGemm::MIterPerWarp * BlockGemm::NIterPerWarp * BlockGemm::KIterPerWarp *
+    (BlockGemm::WarpGemm::kK / BlockGemm::WarpGemm::WarpGemmAttribute::Impl::kK);
 
-template <typename PipelineProblem>
-struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/true>
+template <typename PipelineProblem, typename Policy = BlockFmhaV3PipelineDefaultPolicy>
+struct CoreLoopSchedulingParams
 {
-    template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
-    CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
-                                                  ck_tile::number<Phase>)
-    {
-        using namespace ck_tile;
+    using QKBlockGemm =
+        ck_tile::remove_cvref_t<decltype(Policy::template GetQKBlockGemm<PipelineProblem>())>;
+    using PVBlockGemm =
+        ck_tile::remove_cvref_t<decltype(Policy::template GetPVBlockGemm<PipelineProblem>())>;
 
-        if constexpr(WaveGroup == 0)
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                static_for<0, 14, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-            else if constexpr(Phase == 2)
-            {
-                static_for<0, 16, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 3)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-        }
-        else
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                static_for<0, 14, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-            }
-            else if constexpr(Phase == 2)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-            else if constexpr(Phase == 3)
-            {
-                static_for<0, 16, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
-                });
-            }
-        }
-    }
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm0 = block_gemm_mfma_count_v<QKBlockGemm>;
+    static constexpr ck_tile::index_t kMfmaPerWarpGemm1 = block_gemm_mfma_count_v<PVBlockGemm>;
+
+    static constexpr bool kIsMasking = PipelineProblem::FmhaMask::IsMasking;
 };
 
 template <typename PipelineProblem>
-struct CoreLoopScheduler<PipelineProblem, /*kIsMasking=*/false>
+struct CoreLoopSchedulerDefaultBase
 {
+    using Params = CoreLoopSchedulingParams<PipelineProblem>;
+
+    CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
+    {
+        // First MFMA: front-load 4 TRANS to fill pipeline
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        // Middle MFMAs: steady-state 2 TRANS each
+        static_for<0, Params::kMfmaPerWarpGemm0 - 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 2, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        });
+        // Last MFMA: no remaining TRANS
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+    }
+
+    CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
+    {
+        static_for<0, Params::kMfmaPerWarpGemm1, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+        });
+    }
+
+    CK_TILE_DEVICE static constexpr void schedule_load_phase()
+    {
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 1, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VMEM_READ, 1, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 1, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VMEM_READ, 1, 0);
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 2, 0);
+    }
+
     template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
     CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
                                                   ck_tile::number<Phase>)
     {
-        using namespace ck_tile;
-
-        if constexpr(WaveGroup == 0)
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                static_for<0, 14, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-            else if constexpr(Phase == 2)
-            {
-                static_for<0, 16, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
-                });
-            }
-            else if constexpr(Phase == 3)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-        }
+        constexpr ck_tile::index_t effective = (WaveGroup == 0) ? Phase : (Phase + 3) % 4;
+        if constexpr(effective == 0)
+            schedule_gemm0_compute();
+        else if constexpr(effective == 2)
+            schedule_gemm1_compute();
         else
-        {
-            if constexpr(Phase == 0)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-            else if constexpr(Phase == 1)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x400, 4, 0); // TRANS
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                static_for<0, 14, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x400, 2, 0); // TRANS
-                    __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                });
-                __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-            }
-            else if constexpr(Phase == 2)
-            {
-                __builtin_amdgcn_sched_group_barrier(0x002, 2, 0); // VALU
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 1, 0); // SALU
-                __builtin_amdgcn_sched_group_barrier(0x020, 1, 0); // VMEM read
-                __builtin_amdgcn_sched_group_barrier(0x004, 2, 0); // SALU
-            }
-            else if constexpr(Phase == 3)
-            {
-                static_for<0, 16, 1>{}([&](auto) {
-                    __builtin_amdgcn_sched_group_barrier(0x008, 1, 0); // MFMA
-                    __builtin_amdgcn_sched_group_barrier(0x002, 5, 0); // VALU
-                });
-            }
-        }
+            schedule_load_phase();
     }
+};
+
+template <typename PipelineProblem, typename QDataType, typename KDataType, typename VDataType>
+struct CoreLoopSchedulerImpl;
+
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::bf16_t, ck_tile::bf16_t, ck_tile::bf16_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+};
+
+template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::half_t, ck_tile::half_t, ck_tile::half_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+};
+
+template <typename PipelineProblem>
+struct CoreLoopScheduler : CoreLoopSchedulerImpl<PipelineProblem,
+                                                 typename PipelineProblem::QDataType,
+                                                 typename PipelineProblem::KDataType,
+                                                 typename PipelineProblem::VDataType>
+{
 };
 
 namespace detail {
@@ -351,31 +245,6 @@ struct BlockFmhaFwdV3Pipeline
         }
     }();
 
-    // for debug only
-    template <ck_tile::index_t MPerBlock, ck_tile::index_t NPerBlock>
-    CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc()
-    {
-        using namespace ck_tile;
-        constexpr auto lds_block_desc =
-            make_naive_tensor_descriptor(make_tuple(number<MPerBlock>{}, number<NPerBlock>{}),
-                                         make_tuple(number<NPerBlock>{}, number<1>{}),
-                                         number<1>{},
-                                         number<1>{});
-
-        return lds_block_desc;
-    }
-
-    // for debug only
-    template <ck_tile::index_t MPerBlock>
-    CK_TILE_DEVICE static constexpr auto MakeSimpleLdsDesc1D()
-    {
-        using namespace ck_tile;
-        constexpr auto lds_block_desc = make_naive_tensor_descriptor(
-            make_tuple(number<MPerBlock>{}), make_tuple(number<1>{}), number<1>{}, number<1>{});
-
-        return lds_block_desc;
-    }
-
     template <typename DataType, typename Descriptor>
     CK_TILE_DEVICE static constexpr auto make_lds_tile_window(DataType* __restrict__ base,
                                                               const Descriptor& desc)
@@ -384,29 +253,6 @@ struct BlockFmhaFwdV3Pipeline
 
         auto tensor_view = make_tensor_view<address_space_enum::lds>(base, desc);
         return make_tile_window(tensor_view, desc.get_lengths(), {0, 0});
-    }
-
-    // vmcnt=0~63, lgkmcnt=0~15, expcnt=0~7
-    template <uint16_t Vmcnt, uint8_t Lgkmcnt, uint8_t Expcnt = 7>
-    CK_TILE_DEVICE static constexpr void s_waitcnt()
-    {
-        // vmcnt use bits {[15:14],[3:0]}
-        // expcnt use bits [6:4]
-        // lgkmcnt use bits [11:8]
-        __builtin_amdgcn_s_waitcnt((((0b110000 & Vmcnt) << (14 - 4)) | (0b1111 & Vmcnt)) |
-                                   ((0b111 & Expcnt) << 4) | ((0b1111 & Lgkmcnt) << 8));
-    }
-
-    template <uint16_t Vmcnt>
-    CK_TILE_DEVICE static constexpr void s_waitcnt_vmcnt()
-    {
-        s_waitcnt<Vmcnt, 15>();
-    }
-
-    template <uint8_t Lgkmcnt>
-    CK_TILE_DEVICE static constexpr void s_waitcnt_lgkmcnt()
-    {
-        s_waitcnt<63, Lgkmcnt>();
     }
 
     template <typename QDramBlockWindowTmp,
@@ -460,26 +306,6 @@ struct BlockFmhaFwdV3Pipeline
                           kK1 == VDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
                           kN1 == VDramBlockWindowTmp{}.get_window_lengths()[number<1>{}],
                       "wrong!");
-
-        auto s_lds = make_tensor_view<address_space_enum::lds>(
-            static_cast<SaccDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN0>());
-        [[maybe_unused]] auto s_lds_window =
-            make_tile_window(s_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
-
-        auto p_lds = make_tensor_view<address_space_enum::lds>(
-            static_cast<PDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN0>());
-        [[maybe_unused]] auto p_lds_window =
-            make_tile_window(p_lds, make_tuple(number<kM0>{}, number<kN0>{}), {0, 0});
-
-        auto o_lds = make_tensor_view<address_space_enum::lds>(
-            static_cast<PDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc<kM0, kN1>());
-        [[maybe_unused]] auto o_lds_window =
-            make_tile_window(o_lds, make_tuple(number<kM0>{}, number<kN1>{}), {0, 0});
-
-        auto m_lds = make_tensor_view<address_space_enum::lds>(
-            static_cast<SMPLComputeDataType* __restrict__>(smem_ptr), MakeSimpleLdsDesc1D<kM0>());
-        [[maybe_unused]] auto m_lds_window =
-            make_tile_window(m_lds, make_tuple(number<kM0>{}), {0});
 
         const index_t warp_id       = partition_index[0];
         const index_t warp_group_id = warp_id / 4;
@@ -650,81 +476,6 @@ struct BlockFmhaFwdV3Pipeline
         constexpr index_t NumWarpGroups = Problem::kBlockSize / Policy::NumThreadPerWarpGroup;
         static_assert(NumWarpGroups == 2);
 
-        [[maybe_unused]] auto print_dist_tensor = [&](const auto& dist_tensor, const char* name) {
-            printf("[POYENC] %s (size=%d): %5.2f",
-                   name,
-                   decltype(dist_tensor.thread_buf_)::size(),
-                   ck_tile::type_convert<float>(dist_tensor.thread_buf_[0]));
-            static_for<1, decltype(dist_tensor.thread_buf_)::size(), 1>{}([&](auto i) {
-                printf(", %5.2f", ck_tile::type_convert<float>(dist_tensor.thread_buf_[i]));
-            });
-            printf("\n");
-        };
-
-        [[maybe_unused]] auto print_lds = [&](auto lds_tile_window, const char* name) {
-            const auto num_rows = lds_tile_window.get_window_lengths().at(number<0>{});
-            const auto num_cols = lds_tile_window.get_window_lengths().at(number<1>{});
-
-            auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
-            auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
-
-            if constexpr(true || num_rows < num_cols)
-            {
-                for(int row = 0; row < num_rows; ++row)
-                {
-                    int offset = desc.calculate_offset(make_tuple(row, 0));
-                    printf("[DEVICE] %s[%3d] = %5.2f",
-                           name,
-                           row,
-                           ck_tile::type_convert<float>(data[offset]));
-                    for(int col = 1; col < num_cols; ++col)
-                    {
-                        printf(", ");
-                        offset = desc.calculate_offset(make_tuple(row, col));
-                        printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
-                    }
-                    printf("\n");
-                }
-            }
-            else
-            {
-                for(int col = 0; col < num_cols; ++col)
-                {
-                    int offset = desc.calculate_offset(make_tuple(0, col));
-                    printf("[DEVICE] %s[%3d] = %5.2f",
-                           name,
-                           col,
-                           ck_tile::type_convert<float>(data[offset]));
-                    for(int row = 1; row < num_rows; ++row)
-                    {
-                        printf(", ");
-                        offset = desc.calculate_offset(make_tuple(row, col));
-                        printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
-                    }
-                    printf("\n");
-                }
-            }
-        };
-
-        [[maybe_unused]] auto print_lds_1d = [&](auto lds_tile_window, const char* name) {
-            const auto num_elems = lds_tile_window.get_window_lengths().at(number<0>{});
-
-            auto desc = lds_tile_window.get_bottom_tensor_view().desc_;
-            auto data = lds_tile_window.get_bottom_tensor_view().buf_.p_data_;
-
-            int offset = desc.calculate_offset(make_tuple(0));
-            printf("[DEVICE] %s = %5.2f", name, ck_tile::type_convert<float>(data[offset]));
-            for(int e = 1; e < num_elems; ++e)
-            {
-                printf(", ");
-                offset = desc.calculate_offset(make_tuple(e));
-                printf("%5.2f", ck_tile::type_convert<float>(data[offset]));
-            }
-            printf("\n");
-        };
-
-        // K_mem_su_ld_insts = 1 for 32 x 128
-        // V_mem_su_ld_insts = 1 for 128 x 32
         constexpr int K_mem_su_ld_insts = k_dram_window.get_num_of_access();
         constexpr int V_mem_su_ld_insts = v_dram_window.get_num_of_access();
 
@@ -963,7 +714,6 @@ struct BlockFmhaFwdV3Pipeline
         constexpr index_t num_unpack_insts = kHasLogitsSoftCap ? 48 : 26;
         fp32x2_t pk_o_acc_scale;
         auto fmha_alu_D_upd_unpack = [&] {
-            [[maybe_unused]] auto prev_o_acc_scale = o_acc_scale;
             o_acc_scale                            = [&] {
                 if constexpr(kHasLogitsSoftCap)
                 {
@@ -1050,7 +800,7 @@ struct BlockFmhaFwdV3Pipeline
             auto memV = number<0>{};
             auto memK = number<1>{};
 
-            using Scheduler = CoreLoopScheduler<Problem, FmhaMask::IsMasking>;
+            using Scheduler = CoreLoopScheduler<Problem>;
 
             auto iteration = [&](auto pi) {
                 auto xdl_SP_p01_reg_idx = number<1>{} - pi;
@@ -1080,7 +830,7 @@ struct BlockFmhaFwdV3Pipeline
                     {
                         ASM_MARKER("phase0 Wave0-3 (pi=1)");
                     }
-                    s_waitcnt_lgkmcnt<0>();
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
 #if ADD_SBARRIER_FOR_PHASE0
                     __builtin_amdgcn_s_barrier();
@@ -1099,7 +849,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave0-3");
-                    s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1110,7 +860,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase2
                     ASM_MARKER("phase2 Wave0-3");
-                    s_waitcnt_lgkmcnt<0>();
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1125,7 +875,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
                     ASM_MARKER("phase3 Wave0-3");
-                    s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1160,7 +910,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave4-7");
-                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, 0>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1189,7 +939,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
                     ASM_MARKER("phase3 Wave4-7");
-                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, 0>();
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts, waitcnt_arg::kMaxExpCnt, 0>();
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
@@ -1212,18 +962,18 @@ struct BlockFmhaFwdV3Pipeline
 
             if(1 < num_total_loop)
             {
-                s_waitcnt_vmcnt<K_mem_su_ld_insts>();
+                s_waitcnt<K_mem_su_ld_insts>();
             }
             else
             {
-                s_waitcnt_vmcnt<0>();
+                s_waitcnt<0>();
             }
             __builtin_amdgcn_s_barrier();
 
             V_lds_load(V_lds_rd_idx);
             fmha_alu1(ps_pi);
 
-            s_waitcnt_lgkmcnt<0>();
+            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
 
             auto xdl_SP_p23_reg_idx = ps_pi;
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
@@ -1235,26 +985,13 @@ struct BlockFmhaFwdV3Pipeline
             // (1) load K0 to LDS & VGPR
             K_mem_load(number<0>{}); // mem_K0
 
-            s_waitcnt_vmcnt<0>();
+            s_waitcnt<0>();
             __builtin_amdgcn_s_barrier();
 
             K_lds_load(number<0>{}); // lds_K0
 
-            s_waitcnt_lgkmcnt<0>();
+            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
             __builtin_amdgcn_s_barrier();
-
-#if 0
-            DEBUG_STMTS {
-                const auto size = kv_tile.k_tile.thread_buf_.size();
-                for (int issue = 0; issue < size / 8; ++issue) {
-                    printf("[POYENC] k_tile[%2d] = %5.2f", issue, ck_tile::type_convert<float>(kv_tile.k_tile.thread_buf_[issue * 8]));
-                    for (int i = 1; i < 8; ++i) {
-                        printf(", %5.2f", ck_tile::type_convert<float>(kv_tile.k_tile.thread_buf_[issue * 8 + i]));
-                    }
-                    printf("\n");
-                }
-            }
-#endif
 
             // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
             if(1 < num_total_loop)
@@ -1282,7 +1019,7 @@ struct BlockFmhaFwdV3Pipeline
             {
                 K_mem_load(number<0>{}); // mem_K2
 
-                s_waitcnt_vmcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
             }
 

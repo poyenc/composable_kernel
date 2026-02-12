@@ -390,33 +390,13 @@ struct BlockFmhaV3PipelineDefaultPolicy
             number<kKPack>{},
             number<1>{});
 
-        constexpr auto desc = transform_tensor_descriptor(
+        return transform_tensor_descriptor(
             k_lds_block_desc_0,
             make_tuple(make_merge_transform(make_tuple(
                            number<NumIssues>{}, number<NumWarps>{}, number<NThreadPerWarp>{})),
                        make_merge_transform(make_tuple(
                            number<NumLoadUnits>{}, number<KThreadPerWarp>{}, number<kKPack>{}))),
             make_tuple(sequence<1, 2, 3>{}, sequence<0, 4, 5>{}),
-            make_tuple(sequence<0>{}, sequence<1>{}));
-
-        return transform_tensor_descriptor(
-            desc,
-            make_tuple(make_functor_transform(
-                           [](auto idx) {
-                               if constexpr(Problem::BlockFmhaShape::kN0 == 32)
-                               {
-                                   return bit_cast<index_t>(
-                                       inverse_permute_bits_5(bit_cast<uint32_t>(idx)));
-                               }
-                               else
-                               {
-                                   return bit_cast<index_t>(
-                                       inverse_key_token_remap(bit_cast<uint32_t>(idx)));
-                               }
-                           },
-                           number<kNPerBlock>{}),
-                       make_pass_through_transform(number<kKPerBlock>{})),
-            make_tuple(sequence<0>{}, sequence<1>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
     }
 
@@ -544,38 +524,13 @@ struct BlockFmhaV3PipelineDefaultPolicy
             number<kKPack>{},
             number<1>{});
 
-        constexpr auto desc = transform_tensor_descriptor(
+        return transform_tensor_descriptor(
             v_lds_block_desc_0,
             make_tuple(make_merge_transform(make_tuple(
                            number<NumIssues>{}, number<NumWarps>{}, number<KThreadPerWarp>{})),
                        make_merge_transform(make_tuple(
                            number<NumLoadUnits>{}, number<NThreadPerWarp>{}, number<kKPack>{}))),
             make_tuple(sequence<1, 2, 3>{}, sequence<0, 4, 5>{}),
-            make_tuple(sequence<0>{}, sequence<1>{}));
-
-        return transform_tensor_descriptor(
-            desc,
-            make_tuple(make_functor_transform(
-                           [](auto idx) {
-#if CK_TILE_REMAP_TOKEN_USING_DESC
-                               if constexpr(Problem::BlockFmhaShape::kN1 == 32)
-                               {
-                                   return bit_cast<index_t>(
-                                       permute_bits_5(bit_cast<uint32_t>(idx)));
-                               }
-                               else
-                               {
-                                   return bit_cast<index_t>(
-                                       inverse_value_token_remap(bit_cast<uint32_t>(idx)));
-                                   ;
-                               }
-#else
-                               return idx;
-#endif
-                           },
-                           number<kKPerBlock>{}),
-                       make_pass_through_transform(number<kNPerBlock>{})),
-            make_tuple(sequence<0>{}, sequence<1>{}),
             make_tuple(sequence<0>{}, sequence<1>{}));
     }
 

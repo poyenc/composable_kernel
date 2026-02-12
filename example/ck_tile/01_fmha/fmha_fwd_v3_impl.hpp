@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include <utility>
-
 #include "ck_tile/core/numeric/bfloat16.hpp"
 #include "ck_tile/core/numeric/half.hpp"
 #include "ck_tile/core/container/sequence.hpp"
