@@ -435,18 +435,8 @@ struct BlockFmhaFwdV3Pipeline
             sp(number<0>{}).sp_compute, sequence<1>{}, f_max, SMPLComputeDataType{0})) m;
         decltype(m) l;
 
-        // initialize k_lds_window and v_lds_window
-        // FIXME: fp8 uses real partition_index instead of all_zeros + explicit offset
-        // because the hardcoded offset formulas below are derived for bf16/fp16 MFMA
-        // register layouts and produce incorrect results for fp8. Deriving correct
-        // fp8 offset formulas would allow using all_zeros_partition_index here too,
-        // potentially saving the runtime coordinate computation overhead.
-        const auto fp8_or_zeros_partition_index = [&] {
-            if constexpr(std::is_same_v<KDataType, fp8_t>)
-                return partition_index;
-            else
-                return all_zeros_partition_index;
-        }();
+        // initialize k_lds_window and v_lds_window with all_zeros_partition_index
+        // The actual per-thread offset is computed below and passed to load_tile_with_offset
 
         static_for<0, 2, 1>{}([&](auto idx) {
             k_lds_window_load(idx) =
@@ -459,7 +449,7 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeKRegTileDistribution<Problem>(),
-                                 fp8_or_zeros_partition_index);
+                                 all_zeros_partition_index);
         });
 
         static_for<0, 2, 1>{}([&](auto idx) {
@@ -473,18 +463,29 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeVRegTileDistribution<Problem>(),
-                                 fp8_or_zeros_partition_index);
+                                 all_zeros_partition_index);
         });
 
+        // Compute per-thread LDS load offset using tile distribution adaptor
+        // This reuses the same coordinate computation that tile_window uses internally
         const index_t k_lds_load_offset = [&] {
             if constexpr(std::is_same_v<KDataType, fp8_t>)
             {
-                // FIXME: derive fp8-specific offset formula from
-                // mfma_f32_32x32x16_fp8 B-operand register layout
-                return 0;
+                // For fp8, compute offset using tile distribution adaptor
+                constexpr auto k_tile_dstr = Policy::template MakeKRegTileDistribution<Problem>();
+                constexpr auto k_lds_desc  = Policy::template MakeKLdsLoadBlockDescriptor<Problem>();
+                constexpr index_t NDimY    = decltype(k_tile_dstr)::NDimY;
+
+                auto top_index = container_concat(partition_index, multi_index<NDimY>{});
+                const auto adaptor_coord = make_tensor_adaptor_coordinate(
+                    k_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
+                const auto bottom_idx = adaptor_coord.get_bottom_index();
+                const auto lds_coord = make_tensor_coordinate(k_lds_desc, bottom_idx);
+                return lds_coord.get_offset();
             }
             else
             {
+                // bf16/fp16: use hardcoded formula (empirically derived)
                 index_t start_row   = lane_id % 32;
                 index_t start_col   = lane_id / 32 * 8;
                 index_t warp_offset = (start_row / 8) * (4 * 4) / 2;
@@ -495,12 +496,21 @@ struct BlockFmhaFwdV3Pipeline
         const index_t v_lds_load_offset = [&] {
             if constexpr(std::is_same_v<VDataType, fp8_t>)
             {
-                // FIXME: derive fp8-specific offset formula from
-                // mfma_f32_32x32x16_fp8 B-operand transposed register layout
-                return 0;
+                // For fp8, compute offset using tile distribution adaptor
+                constexpr auto v_tile_dstr = Policy::template MakeVRegTileDistribution<Problem>();
+                constexpr auto v_lds_desc  = Policy::template MakeVLdsLoadBlockDescriptor<Problem>();
+                constexpr index_t NDimY    = decltype(v_tile_dstr)::NDimY;
+
+                auto top_index = container_concat(partition_index, multi_index<NDimY>{});
+                const auto adaptor_coord = make_tensor_adaptor_coordinate(
+                    v_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
+                const auto bottom_idx = adaptor_coord.get_bottom_index();
+                const auto lds_coord = make_tensor_coordinate(v_lds_desc, bottom_idx);
+                return lds_coord.get_offset();
             }
             else
             {
+                // bf16/fp16: use hardcoded formula (empirically derived)
                 index_t group_idx     = lane_id / 16;
                 index_t local_lane_id = lane_id % 16;
                 index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
