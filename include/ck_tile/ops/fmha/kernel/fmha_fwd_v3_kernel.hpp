@@ -5,6 +5,7 @@
 
 #include "ck_tile/core.hpp"
 #include "ck_tile/ops/common.hpp"
+#include "ck_tile/ops/fmha/block/block_attention_quant_scale_enum.hpp"
 #include "ck_tile/ops/fmha/block/block_masking.hpp"
 #include "ck_tile/ops/fmha/block/variants.hpp"
 
@@ -25,6 +26,7 @@ struct FmhaFwdV3Kernel
     using KDataType    = ck_tile::remove_cvref_t<typename FmhaPipeline::KDataType>;
     using VDataType    = ck_tile::remove_cvref_t<typename FmhaPipeline::VDataType>;
     using LSEDataType  = ck_tile::remove_cvref_t<typename FmhaPipeline::LSEDataType>;
+    using PDataType    = ck_tile::remove_cvref_t<typename FmhaPipeline::PDataType>;
     using ODataType    = ck_tile::remove_cvref_t<typename FmhaPipeline::ODataType>;
     using SaccDataType = ck_tile::remove_cvref_t<typename FmhaPipeline::SaccDataType>;
 
@@ -35,6 +37,7 @@ struct FmhaFwdV3Kernel
     static constexpr bool kPadHeadDimV      = FmhaPipeline::kPadHeadDimV;
     static constexpr bool kHasLogitsSoftCap = FmhaPipeline::kHasLogitsSoftCap;
     static constexpr bool kStoreLSE         = FmhaPipeline::kStoreLSE;
+    static constexpr auto QScaleEnum        = FmhaPipeline::QScaleEnum;
 
     using AttentionVariant = ck_tile::remove_cvref_t<typename FmhaPipeline::AttentionVariant>;
     using FmhaMask         = ck_tile::remove_cvref_t<typename FmhaPipeline::FmhaMask>;
@@ -114,11 +117,22 @@ struct FmhaFwdV3Kernel
         float logits_soft_cap_rcp;
     };
 
+    struct FmhaFwdCommonQScaleKargs
+    {
+        const void* q_descale_ptr = nullptr;
+        const void* k_descale_ptr = nullptr;
+        const void* v_descale_ptr = nullptr;
+    };
+
     struct FmhaFwdBatchModeKargs
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
           std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
-          std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<2>>
+          std::conditional_t<
+              QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
+              FmhaFwdCommonQScaleKargs,
+              FmhaFwdEmptyKargs<2>>,
+          std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<3>>
     {
         ck_tile::index_t batch_stride_q;
         ck_tile::index_t batch_stride_k;
@@ -135,7 +149,11 @@ struct FmhaFwdV3Kernel
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
           std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
-          std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<2>>
+          std::conditional_t<
+              QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
+              FmhaFwdCommonQScaleKargs,
+              FmhaFwdEmptyKargs<2>>,
+          std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<3>>
     {
         const int32_t* seqstart_q_ptr;
         const int32_t* seqstart_k_ptr;
@@ -191,7 +209,10 @@ struct FmhaFwdV3Kernel
               ck_tile::index_t mask_type,
               ck_tile::index_t remap_opt,
               const void* cu_seqlen_q_ptr = nullptr,
-              const void* cu_seqlen_k_ptr = nullptr)
+              const void* cu_seqlen_k_ptr = nullptr,
+              const void* q_descale_ptr   = nullptr,
+              const void* k_descale_ptr   = nullptr,
+              const void* v_descale_ptr   = nullptr)
     {
         Kargs kargs{{q_ptr,
                      k_ptr,
@@ -214,6 +235,7 @@ struct FmhaFwdV3Kernel
                      nhead_stride_o}, // args for common karg
                     {},               // placeholder for mask
                     {},               // placeholder for lse
+                    {},               // placeholder for qscale
                     {},               // placeholder for logits_soft_cap
                     batch_stride_q,
                     batch_stride_k,
@@ -232,6 +254,12 @@ struct FmhaFwdV3Kernel
             kargs.lse_ptr          = lse_ptr;
             kargs.nhead_stride_lse = nhead_stride_lse;
             kargs.batch_stride_lse = batch_stride_lse;
+        }
+        if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR)
+        {
+            kargs.q_descale_ptr = q_descale_ptr;
+            kargs.k_descale_ptr = k_descale_ptr;
+            kargs.v_descale_ptr = v_descale_ptr;
         }
         if constexpr(kHasLogitsSoftCap)
         {
@@ -274,7 +302,10 @@ struct FmhaFwdV3Kernel
               ck_tile::index_t mask_type,
               ck_tile::index_t remap_opt,
               const void* cu_seqlen_q_ptr = nullptr,
-              const void* cu_seqlen_k_ptr = nullptr)
+              const void* cu_seqlen_k_ptr = nullptr,
+              const void* q_descale_ptr   = nullptr,
+              const void* k_descale_ptr   = nullptr,
+              const void* v_descale_ptr   = nullptr)
     {
         Kargs kargs{{q_ptr,
                      k_ptr,
@@ -297,6 +328,7 @@ struct FmhaFwdV3Kernel
                      nhead_stride_o}, // args for common karg
                     {},               // placeholder for mask
                     {},               // placeholder for lse
+                    {},               // placeholder for qscale
                     {},               // placeholder for logits_soft_cap
                     reinterpret_cast<const int32_t*>(seqstart_q_ptr),
                     reinterpret_cast<const int32_t*>(seqstart_k_ptr),
@@ -314,6 +346,12 @@ struct FmhaFwdV3Kernel
         {
             kargs.lse_ptr          = lse_ptr;
             kargs.nhead_stride_lse = nhead_stride_lse;
+        }
+        if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR)
+        {
+            kargs.q_descale_ptr = q_descale_ptr;
+            kargs.k_descale_ptr = k_descale_ptr;
+            kargs.v_descale_ptr = v_descale_ptr;
         }
         if constexpr(kHasLogitsSoftCap)
         {
@@ -540,8 +578,10 @@ struct FmhaFwdV3Kernel
                 make_tuple(number<FmhaPipeline::kM0>{}, number<FmhaPipeline::kSubQKHeaddim>{}),
                 sequence<kPadSeqLenQ, kPadHeadDimQ>{});
         }();
-        static_assert(FmhaPipeline::kN0 == 64, "only kN0 == 64 is supported");
-        static_assert(FmhaPipeline::kK1 == 64, "only kK1 == 64 is supported");
+        static_assert(FmhaPipeline::kN0 == 64 || FmhaPipeline::kN0 == 128,
+                      "only kN0 == 64 or 128 is supported");
+        static_assert(FmhaPipeline::kK1 == 64 || FmhaPipeline::kK1 == 128,
+                      "only kK1 == 64 or 128 is supported");
 
         const auto k_dram = [&]() {
             const auto k_dram_naive = make_naive_tensor_view<address_space_enum::global>(
@@ -638,36 +678,92 @@ struct FmhaFwdV3Kernel
         const auto partition_index = multi_index<2>{get_warp_id(), get_lane_id()};
 
         AttentionVariant variant;
+
+        const float scale_s = [&] {
+            if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR)
+            {
+                float q_descale = *(reinterpret_cast<const float*>(kargs.q_descale_ptr));
+                float k_descale = *(reinterpret_cast<const float*>(kargs.k_descale_ptr));
+                return kargs.scale_s * q_descale * k_descale;
+            }
+            else
+            {
+                return kargs.scale_s;
+            }
+        }();
+
         const auto variant_params = [&] {
             if constexpr(kHasLogitsSoftCap)
             {
                 return ck_tile::LogitsSoftCapParams<FmhaMask, CK_TILE_FMHA_FWD_FAST_EXP2>{
-                    mask, kargs.scale_s, kargs.logits_soft_cap, kargs.logits_soft_cap_rcp};
+                    mask, scale_s, kargs.logits_soft_cap, kargs.logits_soft_cap_rcp};
             }
             else
             {
-                return ck_tile::StandardAttentionParams<FmhaMask>{mask, kargs.scale_s};
+                return ck_tile::StandardAttentionParams<FmhaMask>{mask, scale_s};
             }
         }();
 
         BlockIndices block_indices{i_batch, i_nhead, i_nhead / kargs.nhead_ratio_qk};
 
         auto o_acc_tile = [&]() {
-            return FmhaPipeline{}(partition_index,
-                                  q_dram_window,
-                                  k_dram_window,
-                                  v_dram_window,
-                                  lse_dram_window,
-                                  mask,
-                                  kargs.scale_s,
-                                  variant,
-                                  variant_params,
-                                  block_indices,
-                                  reinterpret_cast<KDataType*>(smem_k[0]),
-                                  reinterpret_cast<KDataType*>(smem_k[1]),
-                                  reinterpret_cast<VDataType*>(smem_v[0]),
-                                  reinterpret_cast<VDataType*>(smem_v[1]),
-                                  smem);
+            if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR)
+            {
+                float v_descale = *(reinterpret_cast<const float*>(kargs.v_descale_ptr));
+                float scale_p =
+                    ck_tile::type_convert<float>(ck_tile::numeric<PDataType>::max());
+                float scale_o = v_descale / scale_p;
+
+                auto o_acc_element_func = [&]() {
+                    if constexpr(std::is_same_v<ODataType, ck_tile::fp8_t>)
+                        return make_composes(
+                            ck_tile::saturates<ck_tile::fp8_t>{},
+                            ck_tile::scales<ck_tile::remove_cvref_t<decltype(scale_o)>>{scale_o});
+                    else
+                        return ck_tile::scales<ck_tile::remove_cvref_t<decltype(scale_o)>>{scale_o};
+                }();
+
+                return FmhaPipeline{}(partition_index,
+                                      q_dram_window,
+                                      identity{},
+                                      k_dram_window,
+                                      identity{},
+                                      v_dram_window,
+                                      identity{},
+                                      lse_dram_window,
+                                      identity{},
+                                      identity{},
+                                      scales<ck_tile::remove_cvref_t<decltype(scale_p)>>{scale_p},
+                                      o_acc_element_func,
+                                      mask,
+                                      scale_s,
+                                      variant,
+                                      variant_params,
+                                      block_indices,
+                                      reinterpret_cast<KDataType*>(smem_k[0]),
+                                      reinterpret_cast<KDataType*>(smem_k[1]),
+                                      reinterpret_cast<VDataType*>(smem_v[0]),
+                                      reinterpret_cast<VDataType*>(smem_v[1]),
+                                      smem);
+            }
+            else
+            {
+                return FmhaPipeline{}(partition_index,
+                                      q_dram_window,
+                                      k_dram_window,
+                                      v_dram_window,
+                                      lse_dram_window,
+                                      mask,
+                                      scale_s,
+                                      variant,
+                                      variant_params,
+                                      block_indices,
+                                      reinterpret_cast<KDataType*>(smem_k[0]),
+                                      reinterpret_cast<KDataType*>(smem_k[1]),
+                                      reinterpret_cast<VDataType*>(smem_v[0]),
+                                      reinterpret_cast<VDataType*>(smem_v[1]),
+                                      smem);
+            }
         }();
 
         // O DRAM and O DRAM window

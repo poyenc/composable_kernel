@@ -211,10 +211,12 @@ float fmha_fwd(fmha_fwd_traits traits, fmha_fwd_args args, const ck_tile::stream
                         ((0 < args.window_size_left) or (0 < args.window_size_right));
     const bool can_dispatch_v3 =
         (device_name.compare(0, 6, "gfx950") == 0) and
-        (traits.data_type.compare("fp16") == 0 or traits.data_type.compare("bf16") == 0) and
+        (((traits.data_type.compare("fp16") == 0 or traits.data_type.compare("bf16") == 0) and
+          (traits.qscale_type == quant_scale_enum::no_scale)) or
+         ((traits.data_type.compare("fp8bf16") == 0) and
+          (traits.qscale_type == quant_scale_enum::pertensor))) and
         traits.is_v_rowmajor and (traits.bias_type == bias_enum::no_bias) and
-        (not traits.has_lse) and (not traits.has_dropout) and
-        (traits.qscale_type == quant_scale_enum::no_scale) and (not is_swa) and
+        (not traits.has_lse) and (not traits.has_dropout) and (not is_swa) and
         (args.nhead_q % args.nhead_k == 0) and (args.hdim_q == 128) and (args.hdim_v == 128);
     if ({F_is_v3_enabled} and can_dispatch_v3) {{
         return fmha_fwd_v3(traits, args, config);
@@ -1067,6 +1069,11 @@ class KernelComponentFactoryGfx950(
             if (128, 128) in result.keys():
                 result[(128, 128)].append(
                     FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 16,  32, 32, 16,  -1))  # fmt: skip
+        elif dtype in cls._DT_FP8BF16:
+            # add tile for qr_async_trload_v3 fp8, double kK0(bk0) and kK1(bk1) compared to fp16
+            if (128, 128) in result.keys():
+                result[(128, 128)].append(
+                    FmhaFwdTileSize(256, 128, 128, 128, 128, 128,  8, 1, 1,  8, 1, 1,  32, 32, 32,  32, 32, 32,  -1))  # fmt: skip
         return result
 
     @classmethod
@@ -1104,6 +1111,13 @@ class KernelComponentFactoryGfx950(
                 for logits, mask in itertools.product(["t", "f"], ["no", "causal"]):
                     pipelines.append(FmhaFwdPipeline("qr_async_trload_v3", "row", "t", "t", "f", "f",
                         F_logits=logits, F_bias="no", F_lse="f", F_dropout="f", F_qscale=qscale, F_mask=mask, F_skip="f", F_trload="t", F_sink="f"))  # fmt: skip
+
+        elif dtype in cls._DT_FP8BF16:
+            # qr_async_trload_v3 fp8bf16 with pertensor qscale
+            if (hdim, hdim_v) == (128, 128):
+                for logits, mask in itertools.product(["t", "f"], ["no", "causal"]):
+                    pipelines.append(FmhaFwdPipeline("qr_async_trload_v3", "row", "t", "t", "f", "f",
+                        F_logits=logits, F_bias="no", F_lse="f", F_dropout="f", F_qscale="pertensor", F_mask=mask, F_skip="f", F_trload="t", F_sink="f"))  # fmt: skip
 
         return pipelines
 
@@ -1386,9 +1400,7 @@ def write_fwd_api(
             api_pool.render("fmha_fwd_v3", filter_fn=accept_only_v3),
             FMHA_FWD_API_FOOTER_TEMPLATE.format(
                 F_is_v3_enabled=BOOL_MAP[
-                    # NOTE: enable v3 pipelines when ready
-                    # 0 < api_pool.get_num_traits(filter_fn=accept_only_v3)
-                    False
+                    0 < api_pool.get_num_traits(filter_fn=accept_only_v3)
                 ]
             ),
         ]

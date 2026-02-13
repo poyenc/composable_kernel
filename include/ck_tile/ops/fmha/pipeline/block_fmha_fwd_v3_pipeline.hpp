@@ -112,6 +112,42 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::half_t, ck_tile::half_t, 
 };
 
 template <typename PipelineProblem>
+struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck_tile::fp8_t>
+    : CoreLoopSchedulerDefaultBase<PipelineProblem>
+{
+    using Params = CoreLoopSchedulingParams<PipelineProblem>;
+
+    CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
+    {
+        // K iter 0: TRANS-heavy (softmax exp + add reduction)
+        static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+        // K iter 1: VALU-heavy (P scale + cvt_pk_fp8 + o_acc rescale)
+        static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 6, 0);
+        });
+    }
+
+    CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
+    {
+        // First half: v_perm + v_max3 + permlane chain
+        static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+        });
+        // Second half: v_fma chain (data-dep limited)
+        static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 3, 0);
+        });
+    }
+};
+
+template <typename PipelineProblem>
 struct CoreLoopScheduler : CoreLoopSchedulerImpl<PipelineProblem,
                                                  typename PipelineProblem::QDataType,
                                                  typename PipelineProblem::KDataType,
@@ -153,6 +189,15 @@ CK_TILE_DEVICE bf16x2_t cvt_pk_bf16_f32(float a, float b)
 {
     bf16x2_t result;
     asm volatile("v_cvt_pk_bf16_f32 %[result], %[a], %[b]"
+                 : [result] "=v"(result)
+                 : [a] "v"(a), [b] "v"(b));
+    return result;
+}
+
+CK_TILE_DEVICE uint32_t cvt_pk_fp8_f32(float a, float b)
+{
+    uint32_t result;
+    asm volatile("v_cvt_pk_fp8_f32 %[result], %[a], %[b]"
                  : [result] "=v"(result)
                  : [a] "v"(a), [b] "v"(b));
     return result;
@@ -219,8 +264,7 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr bool kHasDropout       = Problem::kHasDropout;
     static constexpr auto QScaleEnum        = Problem::QScaleEnum;
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kStoreLSE && !kHasDropout &&
-                   (QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE) &&
+    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout &&
                    !kSkipMinSeqlenQ),
                   "enable unsupported features");
 
@@ -392,6 +436,18 @@ struct BlockFmhaFwdV3Pipeline
         decltype(m) l;
 
         // initialize k_lds_window and v_lds_window
+        // FIXME: fp8 uses real partition_index instead of all_zeros + explicit offset
+        // because the hardcoded offset formulas below are derived for bf16/fp16 MFMA
+        // register layouts and produce incorrect results for fp8. Deriving correct
+        // fp8 offset formulas would allow using all_zeros_partition_index here too,
+        // potentially saving the runtime coordinate computation overhead.
+        const auto fp8_or_zeros_partition_index = [&] {
+            if constexpr(std::is_same_v<KDataType, fp8_t>)
+                return partition_index;
+            else
+                return all_zeros_partition_index;
+        }();
+
         static_for<0, 2, 1>{}([&](auto idx) {
             k_lds_window_load(idx) =
                 make_tile_window(make_lds_tile_window(
@@ -403,7 +459,7 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeKLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeKRegTileDistribution<Problem>(),
-                                 all_zeros_partition_index);
+                                 fp8_or_zeros_partition_index);
         });
 
         static_for<0, 2, 1>{}([&](auto idx) {
@@ -417,22 +473,40 @@ struct BlockFmhaFwdV3Pipeline
                                      }(),
                                      Policy::template MakeVLdsLoadBlockDescriptor<Problem>()),
                                  Policy::template MakeVRegTileDistribution<Problem>(),
-                                 all_zeros_partition_index);
+                                 fp8_or_zeros_partition_index);
         });
 
         const index_t k_lds_load_offset = [&] {
-            index_t start_row   = lane_id % 32;
-            index_t start_col   = lane_id / 32 * 8;
-            index_t warp_offset = (start_row / 8) * (4 * 4) / 2;
-            return (start_row * 64) + start_col + warp_offset;
+            if constexpr(std::is_same_v<KDataType, fp8_t>)
+            {
+                // FIXME: derive fp8-specific offset formula from
+                // mfma_f32_32x32x16_fp8 B-operand register layout
+                return 0;
+            }
+            else
+            {
+                index_t start_row   = lane_id % 32;
+                index_t start_col   = lane_id / 32 * 8;
+                index_t warp_offset = (start_row / 8) * (4 * 4) / 2;
+                return (start_row * 64) + start_col + warp_offset;
+            }
         }();
 
         const index_t v_lds_load_offset = [&] {
-            index_t group_idx     = lane_id / 16;
-            index_t local_lane_id = lane_id % 16;
-            index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
-            index_t start_col     = (group_idx % 2) * 16 + (local_lane_id % 4) * 4;
-            return (start_row * 64) + start_col;
+            if constexpr(std::is_same_v<VDataType, fp8_t>)
+            {
+                // FIXME: derive fp8-specific offset formula from
+                // mfma_f32_32x32x16_fp8 B-operand transposed register layout
+                return 0;
+            }
+            else
+            {
+                index_t group_idx     = lane_id / 16;
+                index_t local_lane_id = lane_id % 16;
+                index_t start_row     = (group_idx / 2) * 4 + local_lane_id / 4;
+                index_t start_col     = (group_idx % 2) * 16 + (local_lane_id % 4) * 4;
+                return (start_row * 64) + start_col;
+            }
         }();
 
         {
@@ -643,11 +717,17 @@ struct BlockFmhaFwdV3Pipeline
                     sp(sp_reg_idx).p.thread_buf_[idx]     = casted.x;
                     sp(sp_reg_idx).p.thread_buf_[idx + 1] = casted.y;
                 }
-                else
+                else if constexpr(std::is_same_v<PDataType, bf16_t>)
                 {
                     auto casted                           = detail::cvt_pk_bf16_f32(x, y);
                     sp(sp_reg_idx).p.thread_buf_[idx]     = casted.x;
                     sp(sp_reg_idx).p.thread_buf_[idx + 1] = casted.y;
+                }
+                else if constexpr(std::is_same_v<PDataType, fp8_t>)
+                {
+                    uint32_t packed = detail::cvt_pk_fp8_f32(x, y);
+                    sp(sp_reg_idx).p.thread_buf_[idx]     = bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
+                    sp(sp_reg_idx).p.thread_buf_[idx + 1] = bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
                 }
             });
 

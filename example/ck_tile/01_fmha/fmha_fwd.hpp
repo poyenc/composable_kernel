@@ -797,7 +797,10 @@ auto fmha_fwd_v3_create_kargs_and_grids(fmha_fwd_args args)
                                          args.mask_type,
                                          remap_opt,
                                          args.cu_seqlen_q_ptr,
-                                         args.cu_seqlen_k_ptr);
+                                         args.cu_seqlen_k_ptr,
+                                         args.q_descale_ptr,
+                                         args.k_descale_ptr,
+                                         args.v_descale_ptr);
         }
         else
         {
@@ -833,7 +836,10 @@ auto fmha_fwd_v3_create_kargs_and_grids(fmha_fwd_args args)
                                          args.mask_type,
                                          remap_opt,
                                          args.cu_seqlen_q_ptr,
-                                         args.cu_seqlen_k_ptr);
+                                         args.cu_seqlen_k_ptr,
+                                         args.q_descale_ptr,
+                                         args.k_descale_ptr,
+                                         args.v_descale_ptr);
         }
     }();
 
