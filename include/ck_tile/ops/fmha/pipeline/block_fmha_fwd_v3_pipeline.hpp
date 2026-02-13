@@ -466,22 +466,31 @@ struct BlockFmhaFwdV3Pipeline
                                  all_zeros_partition_index);
         });
 
-        // Compute per-thread LDS load offset using tile distribution adaptor
-        // This reuses the same coordinate computation that tile_window uses internally
+        // Compute per-thread LDS load offset using hardcoded formulas (empirically derived)
+        // Using hardcoded formulas instead of make_tensor_adaptor_coordinate() reduces VGPR
+        // pressure because the ds_read base address becomes a simple lane_id computation
+        // instead of requiring runtime coordinate tracking across the loop.
         const index_t k_lds_load_offset = [&] {
             if constexpr(std::is_same_v<KDataType, fp8_t>)
             {
-                // For fp8, compute offset using tile distribution adaptor
-                constexpr auto k_tile_dstr = Policy::template MakeKRegTileDistribution<Problem>();
-                constexpr auto k_lds_desc  = Policy::template MakeKLdsLoadBlockDescriptor<Problem>();
-                constexpr index_t NDimY    = decltype(k_tile_dstr)::NDimY;
-
-                auto top_index = container_concat(partition_index, multi_index<NDimY>{});
-                const auto adaptor_coord = make_tensor_adaptor_coordinate(
-                    k_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
-                const auto bottom_idx = adaptor_coord.get_bottom_index();
-                const auto lds_coord = make_tensor_coordinate(k_lds_desc, bottom_idx);
-                return lds_coord.get_offset();
+                // fp8: hardcoded formula derived from tile distribution analysis
+                // K is broadcast to all warps, so only lane_id matters
+                index_t half_lane = lane_id >> 1;
+                index_t term1     = half_lane & 48;
+                index_t term2     = 0x410 * ((lane_id >> 4) & 1);
+                index_t perm      = (lane_id & 3) | ((lane_id & 4) << 1) | ((lane_id & 8) >> 1);
+                index_t term3     = perm << 6;
+                return term1 + term2 + term3;
+                // Reference implementation using make_tensor_adaptor_coordinate():
+                // constexpr auto k_tile_dstr = Policy::template MakeKRegTileDistribution<Problem>();
+                // constexpr auto k_lds_desc  = Policy::template MakeKLdsLoadBlockDescriptor<Problem>();
+                // constexpr index_t NDimY    = decltype(k_tile_dstr)::NDimY;
+                // auto top_index = container_concat(partition_index, multi_index<NDimY>{});
+                // const auto adaptor_coord = make_tensor_adaptor_coordinate(
+                //     k_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
+                // const auto bottom_idx = adaptor_coord.get_bottom_index();
+                // const auto lds_coord  = make_tensor_coordinate(k_lds_desc, bottom_idx);
+                // return lds_coord.get_offset();
             }
             else
             {
@@ -496,17 +505,23 @@ struct BlockFmhaFwdV3Pipeline
         const index_t v_lds_load_offset = [&] {
             if constexpr(std::is_same_v<VDataType, fp8_t>)
             {
-                // For fp8, compute offset using tile distribution adaptor
-                constexpr auto v_tile_dstr = Policy::template MakeVRegTileDistribution<Problem>();
-                constexpr auto v_lds_desc  = Policy::template MakeVLdsLoadBlockDescriptor<Problem>();
-                constexpr index_t NDimY    = decltype(v_tile_dstr)::NDimY;
-
-                auto top_index = container_concat(partition_index, multi_index<NDimY>{});
-                const auto adaptor_coord = make_tensor_adaptor_coordinate(
-                    v_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
-                const auto bottom_idx = adaptor_coord.get_bottom_index();
-                const auto lds_coord = make_tensor_coordinate(v_lds_desc, bottom_idx);
-                return lds_coord.get_offset();
+                // fp8: hardcoded formula derived from tile distribution analysis
+                // V uses lane_id for intra-warp distribution, no warp_id effect
+                index_t v89 = lane_id >> 1;
+                index_t v65 = (v89 & 7) | ((lane_id >> 2) & 8);
+                index_t v66 = (lane_id & 1) << 3;
+                index_t v64 = v66 | (lane_id & 16);
+                return (v65 << 6) + v64;
+                // Reference implementation using make_tensor_adaptor_coordinate():
+                // constexpr auto v_tile_dstr = Policy::template MakeVRegTileDistribution<Problem>();
+                // constexpr auto v_lds_desc  = Policy::template MakeVLdsLoadBlockDescriptor<Problem>();
+                // constexpr index_t NDimY    = decltype(v_tile_dstr)::NDimY;
+                // auto top_index = container_concat(partition_index, multi_index<NDimY>{});
+                // const auto adaptor_coord = make_tensor_adaptor_coordinate(
+                //     v_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
+                // const auto bottom_idx = adaptor_coord.get_bottom_index();
+                // const auto lds_coord  = make_tensor_coordinate(v_lds_desc, bottom_idx);
+                // return lds_coord.get_offset();
             }
             else
             {
