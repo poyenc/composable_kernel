@@ -979,81 +979,84 @@ struct BlockFmhaFwdV3Pipeline
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
         };
 
-        // pre-stage
+        if(num_total_loop > 0)
         {
-            ASM_MARKER("before pre-stage");
-            // (1) load K0 to LDS & VGPR
-            K_mem_load(number<0>{}); // mem_K0
+            // pre-stage
+            {
+                ASM_MARKER("before pre-stage");
+                // (1) load K0 to LDS & VGPR
+                K_mem_load(number<0>{}); // mem_K0
 
-            s_waitcnt<0>();
-            __builtin_amdgcn_s_barrier();
+                s_waitcnt<0>();
+                __builtin_amdgcn_s_barrier();
 
-            K_lds_load(number<0>{}); // lds_K0
+                K_lds_load(number<0>{}); // lds_K0
 
-            s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
-            __builtin_amdgcn_s_barrier();
+                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
+                __builtin_amdgcn_s_barrier();
 
-            // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
+                // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
+                if(1 < num_total_loop)
+                {
+                    K_mem_load(number<1>{}); // mem_K1
+                }
+                V_mem_load(number<0>{}); // mem_V0
+
+                // (3) mfma (Q*K0) + softmax
+                gemm(number<0>{}, /*gemm_idx=*/number<0>{});
+                fmha_logits_trans(number<0>{});
+                fmha_mask(number<0>{});
+                /// TODO: find better way to map fmha_alu(0,96) call
+                fmha_alu0(number<0>{});
+                fmha_alu_D_upd();
+
+                kv_token_start += kN0;
+                ++i_total_loops;
+                if(num_total_loop <= i_total_loops)
+                {
+                    goto label_main_loops_exit;
+                }
+
+                if(2 < num_total_loop)
+                {
+                    K_mem_load(number<0>{}); // mem_K2
+
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    __builtin_amdgcn_s_barrier();
+                }
+
+                ASM_MARKER("end pre-stage");
+            }
+
             if(1 < num_total_loop)
             {
-                K_mem_load(number<1>{}); // mem_K1
+                if(warp_group_id == 0)
+                {
+                    V_mem_load(number<1>{}); // V1
+                    K_lds_load(number<1>{}); // K1
+
+                    __builtin_amdgcn_s_setprio(0);
+                    __builtin_amdgcn_s_barrier();
+                    while(core_loop(number<0>{}))
+                        ;
+                }
+                if(warp_group_id != 0)
+                {
+                    __builtin_amdgcn_s_setprio(1);
+                    __builtin_amdgcn_s_barrier();
+                    while(core_loop(number<1>{}))
+                        ;
+                }
             }
-            V_mem_load(number<0>{}); // mem_V0
-
-            // (3) mfma (Q*K0) + softmax
-            gemm(number<0>{}, /*gemm_idx=*/number<0>{});
-            fmha_logits_trans(number<0>{});
-            fmha_mask(number<0>{});
-            /// TODO: find better way to map fmha_alu(0,96) call
-            fmha_alu0(number<0>{});
-            fmha_alu_D_upd();
-
-            kv_token_start += kN0;
-            ++i_total_loops;
-            if(num_total_loop <= i_total_loops)
+        label_main_loops_exit:
+            if(num_total_loop % 2)
             {
-                goto label_main_loops_exit;
+                fmha_post_process(number<1>{});
             }
-
-            if(2 < num_total_loop)
+            if(!(num_total_loop % 2))
             {
-                K_mem_load(number<0>{}); // mem_K2
-
-                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
-                __builtin_amdgcn_s_barrier();
+                fmha_post_process(number<0>{});
             }
-
-            ASM_MARKER("end pre-stage");
-        }
-
-        if(1 < num_total_loop)
-        {
-            if(warp_group_id == 0)
-            {
-                V_mem_load(number<1>{}); // V1
-                K_lds_load(number<1>{}); // K1
-
-                __builtin_amdgcn_s_setprio(0);
-                __builtin_amdgcn_s_barrier();
-                while(core_loop(number<0>{}))
-                    ;
-            }
-            if(warp_group_id != 0)
-            {
-                __builtin_amdgcn_s_setprio(1);
-                __builtin_amdgcn_s_barrier();
-                while(core_loop(number<1>{}))
-                    ;
-            }
-        }
-    label_main_loops_exit:
-        if(num_total_loop % 2)
-        {
-            fmha_post_process(number<1>{});
-        }
-        if(!(num_total_loop % 2))
-        {
-            fmha_post_process(number<0>{});
         }
 
         // store lse
