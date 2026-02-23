@@ -749,7 +749,7 @@ struct BlockFmhaFwdV3Pipeline
                 sp(sp_reg_idx).sp_compute, sequence<1>{}, f_max, m.thread_buf_[0]);
 #if defined(__gfx950__)
             // assuming that we are using 32x32 mfma
-            int32x2_t swapped_regs =
+            uint32x2_t swapped_regs =
                 __builtin_amdgcn_permlane32_swap(bit_cast<int32_t>(m_latest.thread_buf_[0]),
                                                  bit_cast<int32_t>(m_latest.thread_buf_[0]),
                                                  false,
@@ -794,7 +794,7 @@ struct BlockFmhaFwdV3Pipeline
                           "assuming that each thread holds 1 rowsum value");
 #if defined(__gfx950__)
             // assuming that we are using 32x32 mfma
-            int32x2_t swapped_regs =
+            uint32x2_t swapped_regs =
                 __builtin_amdgcn_permlane32_swap(bit_cast<int32_t>(rowsum_p.thread_buf_[0]),
                                                  bit_cast<int32_t>(rowsum_p.thread_buf_[0]),
                                                  false,
