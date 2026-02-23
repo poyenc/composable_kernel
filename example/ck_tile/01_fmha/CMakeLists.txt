@@ -204,6 +204,8 @@ list(APPEND EXAMPLE_FMHA_FWD_V3_COMPILE_OPTIONS
   -Wno-undefined-func-template
   -Wno-undefined-reinterpret-cast
   --save-temps
+  -Wno-lifetime-safety-intra-tu-suggestions
+  -Wno-deprecated-attributes
 )
 set(EXAMPLE_FMHA_FWD_V3_COMPILE_DEFINITIONS)
 
