@@ -128,10 +128,9 @@ struct FmhaFwdV3Kernel
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
           std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
-          std::conditional_t<
-              QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
-              FmhaFwdCommonQScaleKargs,
-              FmhaFwdEmptyKargs<2>>,
+          std::conditional_t<QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
+                             FmhaFwdCommonQScaleKargs,
+                             FmhaFwdEmptyKargs<2>>,
           std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<3>>
     {
         ck_tile::index_t batch_stride_q;
@@ -149,10 +148,9 @@ struct FmhaFwdV3Kernel
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
           std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
-          std::conditional_t<
-              QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
-              FmhaFwdCommonQScaleKargs,
-              FmhaFwdEmptyKargs<2>>,
+          std::conditional_t<QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
+                             FmhaFwdCommonQScaleKargs,
+                             FmhaFwdEmptyKargs<2>>,
           std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<3>>
     {
         const int32_t* seqstart_q_ptr;
@@ -673,7 +671,14 @@ struct FmhaFwdV3Kernel
         __shared__ char
             smem_v[2]
                   [FmhaPipeline::Policy::template GetSmemSizeV<typename FmhaPipeline::Problem>()];
-        __shared__ char smem[1];
+        constexpr auto smem_epilogue_size = max(1, EpiloguePipeline::GetSmemSize());
+        __shared__ char smem_epilogue_buf[smem_epilogue_size];
+
+        auto* smem_k0  = reinterpret_cast<KDataType*>(smem_k[0]);
+        auto* smem_k1  = reinterpret_cast<KDataType*>(smem_k[1]);
+        auto* smem_v0  = reinterpret_cast<VDataType*>(smem_v[0]);
+        auto* smem_v1  = reinterpret_cast<VDataType*>(smem_v[1]);
+        void* smem_ptr = smem_epilogue_buf;
 
         const auto partition_index = multi_index<2>{get_warp_id(), get_lane_id()};
 
@@ -710,9 +715,8 @@ struct FmhaFwdV3Kernel
             if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR)
             {
                 float v_descale = *(reinterpret_cast<const float*>(kargs.v_descale_ptr));
-                float scale_p =
-                    ck_tile::type_convert<float>(ck_tile::numeric<PDataType>::max());
-                float scale_o = v_descale / scale_p;
+                float scale_p   = ck_tile::type_convert<float>(ck_tile::numeric<PDataType>::max());
+                float scale_o   = v_descale / scale_p;
 
                 auto o_acc_element_func = [&]() {
                     if constexpr(std::is_same_v<ODataType, ck_tile::fp8_t>)
@@ -740,11 +744,11 @@ struct FmhaFwdV3Kernel
                                       variant,
                                       variant_params,
                                       block_indices,
-                                      reinterpret_cast<KDataType*>(smem_k[0]),
-                                      reinterpret_cast<KDataType*>(smem_k[1]),
-                                      reinterpret_cast<VDataType*>(smem_v[0]),
-                                      reinterpret_cast<VDataType*>(smem_v[1]),
-                                      smem);
+                                      smem_k0,
+                                      smem_k1,
+                                      smem_v0,
+                                      smem_v1,
+                                      smem_ptr);
             }
             else
             {
@@ -758,11 +762,11 @@ struct FmhaFwdV3Kernel
                                       variant,
                                       variant_params,
                                       block_indices,
-                                      reinterpret_cast<KDataType*>(smem_k[0]),
-                                      reinterpret_cast<KDataType*>(smem_k[1]),
-                                      reinterpret_cast<VDataType*>(smem_v[0]),
-                                      reinterpret_cast<VDataType*>(smem_v[1]),
-                                      smem);
+                                      smem_k0,
+                                      smem_k1,
+                                      smem_v0,
+                                      smem_v1,
+                                      smem_ptr);
             }
         }();
 
