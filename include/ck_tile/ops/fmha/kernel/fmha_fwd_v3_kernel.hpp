@@ -472,8 +472,21 @@ struct FmhaFwdV3Kernel
     {
         using namespace ck_tile;
 
-        // allocate LDS
-        __shared__ char smem_ptr[GetSmemSize()];
+        // Notice: When using double buffering, make sure both buffers are in the same array.
+        // This prevents the compiler from using separate VGPRs to store the base address
+        // and enables the use of immediate offsets in load/store instructions.
+        constexpr auto smem_size_kv =
+            FmhaPipeline::Policy::template GetSmemSizeKV<typename FmhaPipeline::Problem>();
+        __shared__ char smem_k[2][smem_size_kv];
+        __shared__ char smem_v[2][smem_size_kv];
+        constexpr auto smem_epilogue_size = max(1, EpiloguePipeline::GetSmemSize());
+        __shared__ char smem_epilogue_buf[smem_epilogue_size];
+
+        auto* smem_k0  = reinterpret_cast<KDataType*>(smem_k[0]);
+        auto* smem_k1  = reinterpret_cast<KDataType*>(smem_k[1]);
+        auto* smem_v0  = reinterpret_cast<VDataType*>(smem_v[0]);
+        auto* smem_v1  = reinterpret_cast<VDataType*>(smem_v[1]);
+        void* smem_ptr = smem_epilogue_buf;
 
         // divide problem
         const auto [i_tile_m, i_tile_n, i_nhead, i_batch] = GetTileIndex(kargs);
@@ -736,6 +749,10 @@ struct FmhaFwdV3Kernel
                     variant,
                     variant_params,
                     block_indices,
+                    smem_k0,
+                    smem_k1,
+                    smem_v0,
+                    smem_v1,
                     smem_ptr);
             }
             else
@@ -749,6 +766,10 @@ struct FmhaFwdV3Kernel
                                       variant,
                                       variant_params,
                                       block_indices,
+                                      smem_k0,
+                                      smem_k1,
+                                      smem_v0,
+                                      smem_v1,
                                       smem_ptr);
             }
         }();
