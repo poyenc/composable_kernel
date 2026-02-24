@@ -368,10 +368,7 @@ struct BlockFmhaFwdV3Pipeline
 
     CK_TILE_HOST_DEVICE static constexpr ck_tile::index_t GetSmemSize()
     {
-        // create another LDS buffer for p
-        return ck_tile::max(kM0 * kN1 * sizeof(PDataType),
-                            Policy::template GetSmemSize<Problem>() +
-                                kM0 * kN0 * sizeof(PDataType));
+        return Policy::template GetSmemSize<Problem>();
     }
 
     template <typename DataType, typename Descriptor>
