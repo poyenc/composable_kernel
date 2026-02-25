@@ -120,7 +120,8 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck
 
     CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
     {
-        // K iter 0: 32 TRANS (v_exp_f32) + ~33 VALU (v_add reduction + permlane)
+        // K iter 0: 32 TRANS (v_exp_f32) + 29 VALU (v_add reduction + v_sub + permlane)
+        // 4 TRANS x 8 = 32, 4 VALU x 8 = 32 (slightly over 29, pulls from K iter 1)
         static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
@@ -130,7 +131,7 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck
         // Increased from 6 to 8 to absorb v_cvt_pk_fp8_f32 tail into MFMA window
         static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 8, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 6, 0);
         });
     }
 
