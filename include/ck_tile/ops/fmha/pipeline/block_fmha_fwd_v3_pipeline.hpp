@@ -126,10 +126,11 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
         });
-        // K iter 1: ~58 VALU (v_mul scale + v_cvt_pk_fp8 + o_acc rescale)
+        // K iter 1: ~89 VALU (v_mul scale + v_cvt_pk_fp8 + o_acc rescale)
+        // Increased from 6 to 8 to absorb v_cvt_pk_fp8_f32 tail into MFMA window
         static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 6, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 8, 0);
         });
     }
 
@@ -138,15 +139,17 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck
 #if !CK_TILE_DISABLE_PACKED_FP32
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
 #endif
-        // First half: v_perm + v_max3 + permlane chain (~29 VALU)
+        // First half: v_perm + v_max3 + permlane chain + O rescale (~56 VALU)
+        // Increased from 4 to 7 to absorb O accumulator rescaling into MFMA window
         static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 7, 0);
         });
-        // Second half: v_fma chain (~33 VALU, data-dep limited at start)
+        // Second half: v_fma chain + v_pk_mul_f32 O rescale (~45 VALU)
+        // Increased from 3 to 7 to absorb fmha_alu_D_upd_pack() into MFMA window
         static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 3, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 7, 0);
         });
     }
 
@@ -980,9 +983,20 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
                     fmha_alu_D_upd_unpack();
-                    Scheduler::schedule(cl_p, number<2>{});
-                    __builtin_amdgcn_sched_barrier(0);
-                    fmha_alu_D_upd_pack();
+                    if constexpr(std::is_same_v<KDataType, fp8_t>)
+                    {
+                        // FP8: move pack inside scheduler window to interleave
+                        // v_pk_mul_f32 with GEMM1 MFMAs
+                        fmha_alu_D_upd_pack();
+                        Scheduler::schedule(cl_p, number<2>{});
+                    }
+                    else
+                    {
+                        // BF16/FP16: keep original structure (pack after scheduler)
+                        Scheduler::schedule(cl_p, number<2>{});
+                        __builtin_amdgcn_sched_barrier(0);
+                        fmha_alu_D_upd_pack();
+                    }
 
                     __builtin_amdgcn_sched_barrier(0);
                     // phase3
@@ -1059,9 +1073,20 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
                     fmha_alu_D_upd_unpack();
-                    Scheduler::schedule(cl_p, number<3>{});
-                    __builtin_amdgcn_sched_barrier(0);
-                    fmha_alu_D_upd_pack();
+                    if constexpr(std::is_same_v<KDataType, fp8_t>)
+                    {
+                        // FP8: move pack inside scheduler window to interleave
+                        // v_pk_mul_f32 with GEMM1 MFMAs
+                        fmha_alu_D_upd_pack();
+                        Scheduler::schedule(cl_p, number<3>{});
+                    }
+                    else
+                    {
+                        // BF16/FP16: keep original structure (pack after scheduler)
+                        Scheduler::schedule(cl_p, number<3>{});
+                        __builtin_amdgcn_sched_barrier(0);
+                        fmha_alu_D_upd_pack();
+                    }
                 }
                 return result;
             };
