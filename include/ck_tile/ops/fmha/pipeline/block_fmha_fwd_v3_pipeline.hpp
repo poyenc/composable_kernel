@@ -953,8 +953,16 @@ struct BlockFmhaFwdV3Pipeline
 #endif
                     if constexpr(pi == 1)
                     {
-                        asm volatile("s_nop 1");
-                        __builtin_amdgcn_sched_barrier(0);
+                        // BF16/FP16 need s_nop to wait for VALU address ops issued
+                        // in the prior load phase before the first MFMA. FP8 uses
+                        // fewer VGPRs so all addresses stay live in registers across
+                        // the entire core loop, eliminating leading VALU address ops
+                        // and thus the need for this wait.
+                        if constexpr(!std::is_same_v<KDataType, fp8_t>)
+                        {
+                            asm volatile("s_nop 1");
+                            __builtin_amdgcn_sched_barrier(0);
+                        }
                     }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
@@ -1040,8 +1048,14 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
-                    asm volatile("s_nop 1");
-                    __builtin_amdgcn_sched_barrier(0);
+
+                    // Skip s_nop for FP8: no leading VALU address ops in load
+                    // phases due to lower VGPR pressure keeping addresses live.
+                    if constexpr(!std::is_same_v<KDataType, fp8_t>)
+                    {
+                        asm volatile("s_nop 1");
+                        __builtin_amdgcn_sched_barrier(0);
+                    }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
                     fmha_logits_trans(xdl_SP_p01_reg_idx);
@@ -1069,8 +1083,13 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
-                    asm volatile("s_nop 1");
-                    __builtin_amdgcn_sched_barrier(0);
+                    // Skip s_nop for FP8: no leading VALU address ops in load
+                    // phases due to lower VGPR pressure keeping addresses live.
+                    if constexpr(!std::is_same_v<KDataType, fp8_t>)
+                    {
+                        asm volatile("s_nop 1");
+                        __builtin_amdgcn_sched_barrier(0);
+                    }
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
                     fmha_alu_D_upd_unpack();
                     if constexpr(std::is_same_v<KDataType, fp8_t>)
