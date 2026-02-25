@@ -1070,10 +1070,10 @@ class KernelComponentFactoryGfx950(
                 result[(128, 128)].append(
                     FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 16,  32, 32, 16,  -1))  # fmt: skip
         elif dtype in cls._DT_FP8BF16:
-            # add tile for qr_async_trload_v3 fp8, double kK0(bk0) and kK1(bk1) compared to fp16
+            # add tile for qr_async_trload_v3 fp8, kN0=kK1=64 with KVector=16
             if (128, 128) in result.keys():
                 result[(128, 128)].append(
-                    FmhaFwdTileSize(256, 128, 128, 128, 128, 128,  8, 1, 1,  8, 1, 1,  32, 32, 32,  32, 32, 32,  -1))  # fmt: skip
+                    FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 32,  32, 32, 32,  -1))  # fmt: skip
         return result
 
     @classmethod

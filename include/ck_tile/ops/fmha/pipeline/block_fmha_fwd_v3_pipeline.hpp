@@ -264,8 +264,7 @@ struct BlockFmhaFwdV3Pipeline
     static constexpr bool kHasDropout       = Problem::kHasDropout;
     static constexpr auto QScaleEnum        = Problem::QScaleEnum;
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
-    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout &&
-                   !kSkipMinSeqlenQ),
+    static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout && !kSkipMinSeqlenQ),
                   "enable unsupported features");
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
@@ -473,24 +472,17 @@ struct BlockFmhaFwdV3Pipeline
         const index_t k_lds_load_offset = [&] {
             if constexpr(std::is_same_v<KDataType, fp8_t>)
             {
-                // fp8: hardcoded formula derived from tile distribution analysis
-                // K is broadcast to all warps, so only lane_id matters
-                index_t half_lane = lane_id >> 1;
-                index_t term1     = half_lane & 48;
-                index_t term2     = 0x410 * ((lane_id >> 4) & 1);
-                index_t perm      = (lane_id & 3) | ((lane_id & 4) << 1) | ((lane_id & 8) >> 1);
-                index_t term3     = perm << 6;
-                return term1 + term2 + term3;
-                // Reference implementation using make_tensor_adaptor_coordinate():
-                // constexpr auto k_tile_dstr = Policy::template MakeKRegTileDistribution<Problem>();
-                // constexpr auto k_lds_desc  = Policy::template MakeKLdsLoadBlockDescriptor<Problem>();
-                // constexpr index_t NDimY    = decltype(k_tile_dstr)::NDimY;
-                // auto top_index = container_concat(partition_index, multi_index<NDimY>{});
-                // const auto adaptor_coord = make_tensor_adaptor_coordinate(
-                //     k_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
-                // const auto bottom_idx = adaptor_coord.get_bottom_index();
-                // const auto lds_coord  = make_tensor_coordinate(k_lds_desc, bottom_idx);
-                // return lds_coord.get_offset();
+                // fp8: use make_tensor_adaptor_coordinate for new tile distribution
+                // TODO: derive hardcoded formula to reduce VGPR pressure
+                constexpr auto k_tile_dstr = Policy::template MakeKRegTileDistribution<Problem>();
+                constexpr auto k_lds_desc = Policy::template MakeKLdsLoadBlockDescriptor<Problem>();
+                constexpr index_t NDimY   = decltype(k_tile_dstr)::NDimY;
+                auto top_index            = container_concat(partition_index, multi_index<NDimY>{});
+                const auto adaptor_coord  = make_tensor_adaptor_coordinate(
+                    k_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
+                const auto bottom_idx = adaptor_coord.get_bottom_index();
+                const auto lds_coord  = make_tensor_coordinate(k_lds_desc, bottom_idx);
+                return lds_coord.get_offset();
             }
             else
             {
@@ -505,23 +497,17 @@ struct BlockFmhaFwdV3Pipeline
         const index_t v_lds_load_offset = [&] {
             if constexpr(std::is_same_v<VDataType, fp8_t>)
             {
-                // fp8: hardcoded formula derived from tile distribution analysis
-                // V uses lane_id for intra-warp distribution, no warp_id effect
-                index_t v89 = lane_id >> 1;
-                index_t v65 = (v89 & 7) | ((lane_id >> 2) & 8);
-                index_t v66 = (lane_id & 1) << 3;
-                index_t v64 = v66 | (lane_id & 16);
-                return (v65 << 6) + v64;
-                // Reference implementation using make_tensor_adaptor_coordinate():
-                // constexpr auto v_tile_dstr = Policy::template MakeVRegTileDistribution<Problem>();
-                // constexpr auto v_lds_desc  = Policy::template MakeVLdsLoadBlockDescriptor<Problem>();
-                // constexpr index_t NDimY    = decltype(v_tile_dstr)::NDimY;
-                // auto top_index = container_concat(partition_index, multi_index<NDimY>{});
-                // const auto adaptor_coord = make_tensor_adaptor_coordinate(
-                //     v_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
-                // const auto bottom_idx = adaptor_coord.get_bottom_index();
-                // const auto lds_coord  = make_tensor_coordinate(v_lds_desc, bottom_idx);
-                // return lds_coord.get_offset();
+                // fp8: use make_tensor_adaptor_coordinate for new tile distribution
+                // TODO: derive hardcoded formula to reduce VGPR pressure
+                constexpr auto v_tile_dstr = Policy::template MakeVRegTileDistribution<Problem>();
+                constexpr auto v_lds_desc = Policy::template MakeVLdsLoadBlockDescriptor<Problem>();
+                constexpr index_t NDimY   = decltype(v_tile_dstr)::NDimY;
+                auto top_index            = container_concat(partition_index, multi_index<NDimY>{});
+                const auto adaptor_coord  = make_tensor_adaptor_coordinate(
+                    v_tile_dstr.get_ps_ys_to_xs_adaptor(), top_index);
+                const auto bottom_idx = adaptor_coord.get_bottom_index();
+                const auto lds_coord  = make_tensor_coordinate(v_lds_desc, bottom_idx);
+                return lds_coord.get_offset();
             }
             else
             {
@@ -751,8 +737,10 @@ struct BlockFmhaFwdV3Pipeline
                 else if constexpr(std::is_same_v<PDataType, fp8_t>)
                 {
                     uint32_t packed = detail::cvt_pk_fp8_f32(x, y);
-                    sp(sp_reg_idx).p.thread_buf_[idx]     = bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
-                    sp(sp_reg_idx).p.thread_buf_[idx + 1] = bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
+                    sp(sp_reg_idx).p.thread_buf_[idx] =
+                        bit_cast<fp8_t>(static_cast<uint8_t>(packed & 0xFF));
+                    sp(sp_reg_idx).p.thread_buf_[idx + 1] =
+                        bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
                 }
             });
 
@@ -819,7 +807,7 @@ struct BlockFmhaFwdV3Pipeline
         constexpr index_t num_unpack_insts = kHasLogitsSoftCap ? 48 : 26;
         fp32x2_t pk_o_acc_scale;
         auto fmha_alu_D_upd_unpack = [&] {
-            o_acc_scale                            = [&] {
+            o_acc_scale = [&] {
                 if constexpr(kHasLogitsSoftCap)
                 {
                     return ck_tile::exp2(m_old.thread_buf_[0] - m.thread_buf_[0]);
