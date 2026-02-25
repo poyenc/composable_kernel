@@ -115,17 +115,18 @@ template <typename PipelineProblem>
 struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck_tile::fp8_t>
     : CoreLoopSchedulerDefaultBase<PipelineProblem>
 {
-    using Params = CoreLoopSchedulingParams<PipelineProblem>;
+    using Base   = CoreLoopSchedulerDefaultBase<PipelineProblem>;
+    using Params = typename Base::Params;
 
     CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
     {
-        // K iter 0: TRANS-heavy (softmax exp + add reduction)
+        // K iter 0: 32 TRANS (v_exp_f32) + ~33 VALU (v_add reduction + permlane)
         static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
         });
-        // K iter 1: VALU-heavy (P scale + cvt_pk_fp8 + o_acc rescale)
+        // K iter 1: ~58 VALU (v_mul scale + v_cvt_pk_fp8 + o_acc rescale)
         static_for<0, Params::kMfmaPerWarpGemm0 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 6, 0);
@@ -134,16 +135,34 @@ struct CoreLoopSchedulerImpl<PipelineProblem, ck_tile::fp8_t, ck_tile::fp8_t, ck
 
     CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
     {
-        // First half: v_perm + v_max3 + permlane chain
+#if !CK_TILE_DISABLE_PACKED_FP32
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
+#endif
+        // First half: v_perm + v_max3 + permlane chain (~29 VALU)
         static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 4, 0);
         });
-        // Second half: v_fma chain (data-dep limited)
+        // Second half: v_fma chain (~33 VALU, data-dep limited at start)
         static_for<0, Params::kMfmaPerWarpGemm1 / 2, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 3, 0);
         });
+    }
+
+    // Must override schedule() — static methods have no virtual dispatch
+    template <ck_tile::index_t WaveGroup, ck_tile::index_t Phase>
+    CK_TILE_DEVICE static constexpr void schedule(ck_tile::number<WaveGroup>,
+                                                  ck_tile::number<Phase>)
+    {
+        constexpr ck_tile::index_t effective = (WaveGroup == 0) ? Phase : (Phase + 3) % 4;
+
+        if constexpr(effective == 0)
+            schedule_gemm0_compute();
+        else if constexpr(effective == 2)
+            schedule_gemm1_compute();
+        else
+            Base::schedule_load_phase();
     }
 };
 
