@@ -5,16 +5,19 @@ import copy
 from dataclasses import dataclass, field
 import fnmatch
 import itertools
+from collections import OrderedDict
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, ClassVar, Iterable, List, Optional, Tuple
 
+from codegen.arch import ArchTrait, get_factories_for_targets
 from codegen.cmake_config import GEN_DIR
 from codegen.cpp_symbol_map import (
     MODE_MAP,
     LAYOUT_MAP,
     BIAS_CHECK_MAP,
-    get_mask_check_map,
     get_mask_map,
+    get_mask_cpp_type,
+    get_mask_cpp_check_expr,
     BIAS_MAP,
     FWD_DTYPE_MAP,
     BOOL_MAP,
@@ -22,7 +25,7 @@ from codegen.cpp_symbol_map import (
     QSCALE_CHECK_MAP,
     QSCALE_MAP,
 )
-from codegen.utils import update_file
+from codegen.utils import check_duplicates_and_paddings, if_, indent, update_file
 
 DTYPE_BITS = {
     "fp32": 32,
@@ -60,19 +63,23 @@ FMHA_FWD_KERNEL_HEADER = """// SPDX-License-Identifier: MIT
 #include "fmha_fwd.hpp"
 """
 
-FMHA_FWD_KERNEL_BODY = """
-using fmha_dtype_{F_idx} = {F_dtype};
+FMHA_FWD_KERNEL_BODY_TEMPLATE = """
+#include <iostream>
 
-using fmha_block_tile_{F_idx} = ck_tile::sequence<{F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0max}>;
+#if !defined(__HIP_DEVICE_COMPILE__) || ({F_arch.preprocessor_check})
 
-using fmha_shape_{F_idx} = ck_tile::TileFmhaShape<fmha_block_tile_{F_idx},
+using fmha_dtype = {F_dtype};
+
+using fmha_block_tile = ck_tile::sequence<{F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0max}>;
+
+using fmha_shape = ck_tile::TileFmhaShape<fmha_block_tile,
                                       ck_tile::sequence<{F_rm0}, {F_rn0}, {F_rk0}>,
                                       ck_tile::sequence<{F_wm0}, {F_wn0}, {F_wk0}>,
                                       ck_tile::sequence<{F_rm1}, {F_rn1}, {F_rk1}>,
                                       ck_tile::sequence<{F_wm1}, {F_wn1}, {F_wk1}>,
                                       {F_vlayout}>;
 
-using fmha_trait_{F_idx} = ck_tile::TileFmhaBatchPrefillTraits<{F_spad},
+using fmha_trait = ck_tile::TileFmhaBatchPrefillTraits<{F_spad},
                                                     {F_skpad},
                                                     {F_dpad},
                                                     {F_dvpad},
@@ -88,98 +95,107 @@ using fmha_trait_{F_idx} = ck_tile::TileFmhaBatchPrefillTraits<{F_spad},
                                                     {F_kv_memory_layout},
                                                     {F_kv_lookup_table}>;
 
-using fmha_variant_{F_idx} = ck_tile::ComposedAttention<{F_logits} * ck_tile::LOGITS_SOFT_CAP, CK_TILE_FMHA_FWD_FAST_EXP2>;
+using fmha_variant = ck_tile::ComposedAttention<{F_logits} * ck_tile::LOGITS_SOFT_CAP, CK_TILE_FMHA_FWD_FAST_EXP2>;
 
-using fmha_mask_{F_idx} = {F_mask};
+using fmha_mask = {F_mask};
 
-using fmha_pipeline_problem_{F_idx} = ck_tile::BlockFmhaBatchPrefillPipelineProblem<
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::QDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::KDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::VDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::SaccDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::SMPLComputeDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::BiasDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::RandValOutputDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::LSEDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::PDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::OaccDataType,
-    typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::ODataType,
-    fmha_shape_{F_idx},
+using fmha_pipeline_problem = {F_pipeline_problem}<
+    typename FmhaFwdTypeConfig<fmha_dtype>::QDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::KDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::VDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::SaccDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::SMPLComputeDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::BiasDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::RandValOutputDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::LSEDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::PDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::OaccDataType,
+    typename FmhaFwdTypeConfig<fmha_dtype>::ODataType,
+    fmha_shape,
     {F_mode},
-    fmha_variant_{F_idx},
-    fmha_mask_{F_idx},
+    fmha_variant,
+    fmha_mask,
     false,
     {F_page_size},
-    fmha_trait_{F_idx}>;
+    fmha_trait>;
 
-using fmha_pipeline_{F_idx} = {F_pipeline}<
-    fmha_pipeline_problem_{F_idx}>;
+using fmha_pipeline = {F_pipeline}<
+    fmha_pipeline_problem>;
 
-using fmha_epilogue_{F_idx} =
+using fmha_epilogue =
     ck_tile::Default2DEpilogue<ck_tile::Default2DEpilogueProblem<typename FmhaFwdTypeConfig<{F_dtype}>::OaccDataType,
                                            typename FmhaFwdTypeConfig<{F_dtype}>::ODataType,
                                            {F_spad}, {F_dvpad}>>;
 
-using fmha_kernel_{F_idx} =
-    ck_tile::FmhaBatchPrefillWithPagedKVCacheKernel<fmha_pipeline_{F_idx}, fmha_epilogue_{F_idx}>;
+using fmha_kernel = {F_kernel}<fmha_pipeline, fmha_epilogue>;
 
-using trait_{F_idx} = fmha_fwd_batch_prefill_traits_<{F_hdim}, {F_dtype}, {F_mode},{F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0max}, {F_vlayout},
-                        {F_pipeline_enum}, {F_logits}, fmha_mask_{F_idx}, {F_bias}, {F_lse}, {F_dropout}, {F_qscale}, {F_spad}, {F_skpad}, {F_dpad}, {F_dvpad}, false, false, {F_page_size}, {F_kv_memory_layout}, {F_kv_lookup_table}>;
-
-#include <iostream>
+using trait = fmha_fwd_batch_prefill_traits_<{F_hdim}, {F_dtype}, {F_mode},{F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0max}, {F_vlayout},
+                        {F_pipeline_enum}, {F_logits}, fmha_mask, {F_bias}, {F_lse}, {F_dropout}, {F_qscale}, {F_spad}, {F_skpad}, {F_dpad}, {F_dvpad}, false, false, {F_page_size}, {F_kv_memory_layout}, {F_kv_lookup_table}>;
 
 template<>
-float fmha_batch_prefill_<trait_{F_idx}>(const ck_tile::stream_config& s, fmha_batch_prefill_args a)
+float fmha_batch_prefill_<trait, {F_arch.tag}>(const ck_tile::stream_config& s, fmha_batch_prefill_args a)
 {{
-    using k_ = fmha_kernel_{F_idx};
+    using k_ = fmha_kernel;
     if(s.log_level_ > 0)
         std::cout << ", {F_kname}" << std::flush;
-    auto [kargs, grids] = fmha_batch_prefill_create_kargs_and_grids<k_>(a);
+    auto [kargs, grids] = {F_kargs_creator}<k_>(a);
     const dim3 blocks                      = k_::BlockSize();
     constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
-    return ck_tile::launch_kernel(s, ck_tile::make_kernel<kBlockPerCu>(k_{{}}, grids, blocks, 0, kargs));
+    return ck_tile::launch_kernel(s, ck_tile::make_kernel<kBlockPerCu, {F_arch.tag}>(k_{{}}, grids, blocks, 0, kargs));
 }}
+
+#endif // !defined(__HIP_DEVICE_COMPILE__) || ({F_arch.preprocessor_check})
 """
 
 FMHA_FWD_API_FILENAME = "fmha_batch_prefill_api.cpp"
-FMHA_FWD_API = """
+FMHA_FWD_API_HEADER = """
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2024, Advanced Micro Devices, Inc. All rights reserved.\n
+// auto generated by generate.py
 #include <cstdio>
 
-namespace {{
-bool get_num_cus(unsigned& num_cu) {{
+#include <hip/hip_runtime.h>
+
+#include "fmha_fwd.hpp"
+
+namespace {
+bool get_num_cus(unsigned& num_cus) {
     int device;
     auto status = hipGetDevice(&device);
-    if(status != hipSuccess) {{
+    if(status != hipSuccess) {
         fprintf(stderr, "failed to get device");
         return false;
-    }}
+    }
 
-    hipDeviceProp_t props{{}};
+    hipDeviceProp_t props{};
     status = hipGetDeviceProperties(&props, device);
-    if(status != hipSuccess) {{
+    if(status != hipSuccess) {
         fprintf(stderr, "failed to get device properties");
         return false;
-    }}
+    }
 
-    num_cu = props.multiProcessorCount;
+    num_cus = props.multiProcessorCount;
     return true;
-}}
+}
 
-unsigned get_num_thread_blocks(unsigned batch, unsigned nheads, unsigned max_seqlen_q, unsigned kM0) {{
+unsigned get_num_thread_blocks(unsigned batch, unsigned nheads, unsigned max_seqlen_q, unsigned kM0) {
     const unsigned num_m_blocks = (max_seqlen_q + kM0 - 1) / kM0;
     const unsigned num_n_blocks = 1; // we assume that num_n_blocks is always 1
 
     return batch * nheads * num_m_blocks * num_n_blocks;
-}}
-}} // namespace
+}
+} // namespace
+"""
 
-float fmha_batch_prefill(fmha_batch_prefill_traits t, fmha_batch_prefill_args a, const ck_tile::stream_config& s) {{
+FMHA_FWD_API_FUNC_TEMPLATE = """
+namespace {{
+float {F_func_name}([[maybe_unused]] fmha_batch_prefill_traits t, [[maybe_unused]] fmha_batch_prefill_args a, [[maybe_unused]] const ck_tile::stream_config& s) {{
     float r = -1;
 
     [[maybe_unused]] const float min_cu_util_rate = 0.8; // minimum CU utilization rate
 
     unsigned num_cus;
-    if (!get_num_cus(num_cus)) {{
+    if(!get_num_cus(num_cus)) {{
         return r;
     }}
 
@@ -187,25 +203,40 @@ float fmha_batch_prefill(fmha_batch_prefill_traits t, fmha_batch_prefill_args a,
         return get_num_thread_blocks(a.batch, a.nhead_q, a.max_seqlen_q, kM0);
     }};
 
+    [[maybe_unused]] const std::string device_name = ck_tile::get_device_name();
+
 {F_dispatch}
     return r;
 }}
+}} // namespace
 """
 
-FMHA_FWD_API_PER_DTYPE = """    {F_if}(t.data_type.compare(\"{F_dtype}\") == 0){{
+FMHA_FWD_API_FOOTER_TEMPLATE = """
+float fmha_batch_prefill(fmha_batch_prefill_traits t, fmha_batch_prefill_args a, const ck_tile::stream_config& s) {
+    return fmha_batch_prefill_v2(t, a, s);
+}
+"""
+
+FMHA_FWD_API_PER_ARCH = """{F_if}({F_arch.device_name_check}) {{
+{F_dtype_case}
+}}
+"""
+
+FMHA_FWD_API_PER_DTYPE = """{F_if}(t.data_type.compare(\"{F_dtype}\") == 0) {{
 {F_hdim_case}
-    }}
-"""
-FMHA_FWD_API_PER_HDIM_CASE = """        {F_if} (t.hdim_q <= {F_hdim} && t.hdim_v <= {F_hdim_v}) {{
-{F_inner_dispatch}
-        }}
+}}
 """
 
-FMHA_FWD_API_INNER_DISPATCH = """            {F_if}((t.is_group_mode == {F_mode}) && (t.is_v_rowmajor == {F_vlayout}) && (t.has_logits_soft_cap == {F_logits}) && ({F_mask_check}) && (t.bias_type == {F_bias_check}) && (t.has_lse == {F_lse})  && (t.has_dropout == {F_dropout}) && (t.qscale_type == {F_qscale_check}) &&
-                        ({F_scheck}) && ({F_skcheck}) && ({F_dcheck}) && ({F_dvcheck}) && ({F_constraint}) && (t.kv_memory_layout == {F_kv_memory_layout}) && (t.kv_lookup_table == {F_kv_lookup_table}) && (t.page_size == {F_page_size})) {{
-                using trait_ = fmha_fwd_batch_prefill_traits_<{F_hdim}, {F_dtype}, {F_mode}, {F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0max}, {F_vlayout}, {F_pipeline_enum}, {F_logits}, {F_mask}, {F_bias}, {F_lse}, {F_dropout}, {F_qscale}, {F_spad}, {F_skpad}, {F_dpad}, {F_dvpad}, false, false, {F_page_size}, {F_kv_memory_layout}, {F_kv_lookup_table}>;
-                return fmha_batch_prefill_<trait_>(s, a);
-            }}
+FMHA_FWD_API_PER_HDIM_CASE = """{F_if}(t.hdim_q <= {F_hdim} && t.hdim_v <= {F_hdim_v}) {{
+{F_inner_dispatch}
+}}
+"""
+
+FMHA_FWD_API_INNER_DISPATCH = """{F_if}((t.is_group_mode == {F_mode}) && (t.is_v_rowmajor == {F_vlayout}) && (t.has_logits_soft_cap == {F_logits}) && ({F_mask_check}) && (t.bias_type == {F_bias_check}) && (t.has_lse == {F_lse})  && (t.has_dropout == {F_dropout}) && (t.qscale_type == {F_qscale_check}) &&
+        ({F_scheck}) && ({F_skcheck}) && ({F_dcheck}) && ({F_dvcheck}) && ({F_constraint}) && (t.kv_memory_layout == {F_kv_memory_layout}) && (t.kv_lookup_table == {F_kv_lookup_table}) && (t.page_size == {F_page_size})) {{
+    using trait_ = fmha_fwd_batch_prefill_traits_<{F_hdim}, {F_dtype}, {F_mode}, {F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0max}, {F_vlayout}, {F_pipeline_enum}, {F_logits}, {F_mask}, {F_bias}, {F_lse}, {F_dropout}, {F_qscale}, {F_spad}, {F_skpad}, {F_dpad}, {F_dvpad}, false, false, {F_page_size}, {F_kv_memory_layout}, {F_kv_lookup_table}>;
+    return fmha_batch_prefill_<trait_, {F_arch.tag}>(s, a);
+}}
 """
 
 
@@ -225,6 +256,7 @@ class CppConstraint:
 
 @dataclass
 class FmhaFwdApiTrait:
+    arch: ArchTrait
     pipeline_tag: str
     # sync with fmha_fwd_traits<>, to generate fallback calls
     hdim: str
@@ -263,7 +295,7 @@ class FmhaFwdApiTrait:
     def scheck(self) -> str:
         if self.mode == "group":
             return "true/*group mode spad always true*/"  # group mode only generate spad/skpad == true
-        if self.pipeline_tag == "qr_async":
+        if self.pipeline_tag in ["qr_async"]:
             if self.spad == "t":
                 return "true"  # always support
             else:
@@ -280,7 +312,7 @@ class FmhaFwdApiTrait:
     def skcheck(self) -> str:
         if self.mode == "group":
             return "true/*group mode skpad always true*/"  # group mode only generate spad/skpad == true
-        if self.pipeline_tag == "qr_async":
+        if self.pipeline_tag in ["qr_async"]:
             if self.skpad == "t":
                 return f"a.seqlen_k == 0 || a.seqlen_k % {self.bn0} != 0"
             else:
@@ -295,7 +327,7 @@ class FmhaFwdApiTrait:
 
     @property
     def dcheck(self) -> str:
-        if self.pipeline_tag == "qr_async":
+        if self.pipeline_tag in ["qr_async"]:
             vec = int((32 * 4) / DTYPE_BITS[self.dtype])
             if self.dpad == "t":
                 return f"a.hdim_q % {vec} == 0"
@@ -312,7 +344,7 @@ class FmhaFwdApiTrait:
 
     @property
     def dvcheck(self) -> str:
-        if self.pipeline_tag == "qr_async":
+        if self.pipeline_tag in ["qr_async"]:
             vec = int((32 * 4) / DTYPE_BITS[self.dtype])
             if self.dvpad == "t":
                 return f"a.hdim_v % {vec} == 0"
@@ -411,80 +443,126 @@ class FmhaFwdPipeline:
 
 
 class FmhaFwdApiPool:
-    def __init__(self, mask_impl):
-        self.pool = dict()
-        self.mask_impl = mask_impl
+    def __init__(self):
+        self.pool = OrderedDict()
 
     def register_traits(self, trait: FmhaFwdApiTrait) -> None:
-        # TODO: do we need to check duplication?
-        if trait.dtype not in self.pool.keys():
-            self.pool[trait.dtype] = dict()
-        if trait.hdim not in self.pool[trait.dtype].keys():
-            self.pool[trait.dtype][trait.hdim] = list()
+        ts = (
+            self.pool.setdefault(trait.arch, OrderedDict())
+            .setdefault(trait.dtype, OrderedDict())
+            .setdefault(trait.hdim, [])
+        )
+        check_duplicates_and_paddings(ts, trait)
+        ts.append(copy.copy(trait))
 
-        self.pool[trait.dtype][trait.hdim].append(copy.copy(trait))
+    def get_num_traits(
+        self, filter_fn: Optional[Callable[[FmhaFwdApiTrait], bool]] = None
+    ) -> int:
+        if filter_fn is None:
 
-    @property
-    def api(self) -> str:
-        per_dtypes = str()
-        for i, dtype in enumerate(self.pool.keys()):
-            per_hdim_case = str()
-            for j, hdim in enumerate(self.pool[dtype].keys()):
-                traits = self.pool[dtype][hdim]
-                inners = str()
-                for k, trait in enumerate(traits):
-                    if_k = "if" if k == 0 else "else if"
-                    inners = inners + FMHA_FWD_API_INNER_DISPATCH.format(
-                        F_if=if_k,
-                        F_mode=MODE_MAP[trait.mode],
-                        F_vlayout=LAYOUT_MAP[trait.vlayout],
-                        F_pipeline_enum=PIPELINE_ENUM_MAP[trait.pipeline_tag],
-                        F_logits=BOOL_MAP[trait.logits],
-                        F_mask=get_mask_map(self.mask_impl)[trait.mask],
-                        F_mask_check=get_mask_check_map(self.mask_impl)[trait.mask],
-                        F_bias_check=BIAS_CHECK_MAP[trait.bias],
-                        F_bias=BIAS_MAP[trait.bias],
-                        F_lse=BOOL_MAP[trait.lse],
-                        F_dropout=BOOL_MAP[trait.dropout],
-                        F_qscale_check=QSCALE_CHECK_MAP[trait.qscale],
-                        F_qscale=QSCALE_MAP[trait.qscale],
-                        F_scheck=trait.scheck,
-                        F_skcheck=trait.skcheck,
-                        F_dcheck=trait.dcheck,
-                        F_dvcheck=trait.dvcheck,
-                        F_constraint=trait.constraint,
-                        F_spad=BOOL_MAP[trait.spad],
-                        F_skpad=BOOL_MAP[trait.skpad],
-                        F_dpad=BOOL_MAP[trait.dpad],
-                        F_dvpad=BOOL_MAP[trait.dvpad],
-                        F_bm0=trait.bm0,
-                        F_bn0=trait.bn0,
-                        F_bk0=trait.bk0,
-                        F_bn1=trait.bn1,
-                        F_bk1=trait.bk1,
-                        F_bk0max=trait.bk0max,
+            def accept_all(trait: FmhaFwdApiTrait) -> bool:
+                return True
+
+            filter_fn = accept_all
+
+        return sum(
+            sum(1 for trait in pool_by_hdim if filter_fn(trait))
+            for pool_by_arch in self.pool.values()
+            for pool_by_dtype in pool_by_arch.values()
+            for pool_by_hdim in pool_by_dtype.values()
+        )
+
+    def render(
+        self, func_name, filter_fn: Optional[Callable[[FmhaFwdApiTrait], bool]] = None
+    ) -> str:
+        if filter_fn is None:
+
+            def accept_all(trait: FmhaFwdApiTrait) -> bool:
+                return True
+
+            filter_fn = accept_all
+
+        def has_traits(node) -> bool:
+            """Recursively traverse nested OrderedDicts and lists to determine if any FmhaFwdApiTrait satisfies filter_fn()."""
+            if isinstance(node, list):
+                return any(filter_fn(elem) for elem in node)
+            elif isinstance(node, OrderedDict):
+                return any(has_traits(val) for val in node.values())
+            return False
+
+        per_arch = str()
+        for i_arch, (arch, pool_by_arch) in enumerate(
+            item for item in self.pool.items() if has_traits(item[1])
+        ):
+            per_dtypes = str()
+            for i_dtype, (dtype, pool_by_dtype) in enumerate(
+                item for item in pool_by_arch.items() if has_traits(item[1])
+            ):
+                per_hdim_case = str()
+                for i_hdim, (hdim, pool_by_hdim) in enumerate(
+                    item for item in pool_by_dtype.items() if has_traits(item[1])
+                ):
+                    inners = str()
+                    for i_trait, trait in enumerate(
+                        [trait for trait in pool_by_hdim if filter_fn(trait)]
+                    ):
+                        inners += FMHA_FWD_API_INNER_DISPATCH.format(
+                            F_if=if_(i_trait),
+                            F_arch=arch,
+                            F_mode=MODE_MAP[trait.mode],
+                            F_vlayout=LAYOUT_MAP[trait.vlayout],
+                            F_pipeline_enum=PIPELINE_ENUM_MAP[trait.pipeline_tag],
+                            F_logits=BOOL_MAP[trait.logits],
+                            F_mask=get_mask_cpp_type(trait.mask),
+                            F_mask_check=get_mask_cpp_check_expr(trait.mask),
+                            F_bias_check=BIAS_CHECK_MAP[trait.bias],
+                            F_bias=BIAS_MAP[trait.bias],
+                            F_lse=BOOL_MAP[trait.lse],
+                            F_dropout=BOOL_MAP[trait.dropout],
+                            F_qscale_check=QSCALE_CHECK_MAP[trait.qscale],
+                            F_qscale=QSCALE_MAP[trait.qscale],
+                            F_scheck=trait.scheck,
+                            F_skcheck=trait.skcheck,
+                            F_dcheck=trait.dcheck,
+                            F_dvcheck=trait.dvcheck,
+                            F_constraint=trait.constraint,
+                            F_spad=BOOL_MAP[trait.spad],
+                            F_skpad=BOOL_MAP[trait.skpad],
+                            F_dpad=BOOL_MAP[trait.dpad],
+                            F_dvpad=BOOL_MAP[trait.dvpad],
+                            F_bm0=trait.bm0,
+                            F_bn0=trait.bn0,
+                            F_bk0=trait.bk0,
+                            F_bn1=trait.bn1,
+                            F_bk1=trait.bk1,
+                            F_bk0max=trait.bk0max,
+                            F_hdim=hdim,
+                            F_dtype=FWD_DTYPE_MAP[dtype],
+                            F_kv_memory_layout=KV_MEMORY_LAYOUT_ENUM_MAP[
+                                trait.kv_memory_layout
+                            ],
+                            F_kv_lookup_table=KV_LOOKUP_TABLE_ENUM_MAP[
+                                trait.kv_lookup_table
+                            ],
+                            F_page_size=trait.page_size,
+                        )
+                    per_hdim_case += FMHA_FWD_API_PER_HDIM_CASE.format(
+                        F_if=if_(i_hdim),
                         F_hdim=hdim,
-                        F_dtype=FWD_DTYPE_MAP[dtype],
-                        F_kv_memory_layout=KV_MEMORY_LAYOUT_ENUM_MAP[
-                            trait.kv_memory_layout
-                        ],
-                        F_kv_lookup_table=KV_LOOKUP_TABLE_ENUM_MAP[
-                            trait.kv_lookup_table
-                        ],
-                        F_page_size=trait.page_size,
+                        F_hdim_v=trait.bn1,
+                        F_inner_dispatch=indent(inners),
                     )
-                if_j = "if" if j == 0 else "else if"
-                per_hdim_case = per_hdim_case + FMHA_FWD_API_PER_HDIM_CASE.format(
-                    F_if=if_j, F_hdim=hdim, F_hdim_v=trait.bn1, F_inner_dispatch=inners
+                per_dtypes += FMHA_FWD_API_PER_DTYPE.format(
+                    F_if=if_(i_dtype), F_dtype=dtype, F_hdim_case=indent(per_hdim_case)
                 )
-            if_i = "if" if i == 0 else "else if"
-            per_dtypes = per_dtypes + FMHA_FWD_API_PER_DTYPE.format(
-                F_if=if_i, F_dtype=dtype, F_hdim_case=per_hdim_case
+            per_arch += FMHA_FWD_API_PER_ARCH.format(
+                F_if=if_(i_arch),
+                F_arch=arch,
+                F_dtype_case=indent(per_dtypes),
             )
-        if not per_dtypes:
-            # empty string we add some ignore to suppress warning in api
-            per_dtypes += "    (void)t; (void)s; (void)a;"
-        return FMHA_FWD_KERNEL_HEADER + FMHA_FWD_API.format(F_dispatch=per_dtypes)
+        return FMHA_FWD_API_FUNC_TEMPLATE.format(
+            F_func_name=func_name, F_dispatch=indent(per_arch)
+        )
 
 
 @dataclass
@@ -522,7 +600,7 @@ class FmhaFwdTileSize:
 
 @dataclass
 class FmhaFwdKernel:
-    F_idx: int  # this is not a tunable, but a counter to differentiate symbol
+    F_arch: ArchTrait
     F_hdim: int  # hdim
     F_dtype: str  # data type
     F_mode: str  # value from MODE_MAP
@@ -531,11 +609,25 @@ class FmhaFwdKernel:
     mask_impl: str
     F_page_size: int = 1  # page block size
 
-    @property
-    def template(self) -> str:
-        return FMHA_FWD_KERNEL_HEADER + FMHA_FWD_KERNEL_BODY.format(
+    _KERNEL_HEADER: ClassVar[str] = FMHA_FWD_KERNEL_HEADER
+    _KERNEL_BODY_TEMPLATE: ClassVar[str] = FMHA_FWD_KERNEL_BODY_TEMPLATE
+
+    @classmethod
+    def _get_cpp_kernel_class_name(cls, pipeline_tag):
+        return "ck_tile::FmhaBatchPrefillWithPagedKVCacheKernel"
+
+    @classmethod
+    def _get_cpp_kargs_creator_func_name(cls, pipeline_tag):
+        return "fmha_batch_prefill_create_kargs_and_grids"
+
+    @classmethod
+    def _get_cpp_pipeline_problem_name(cls, pipeline_tag):
+        return "ck_tile::BlockFmhaBatchPrefillPipelineProblem"
+
+    def render(self) -> str:
+        return type(self)._KERNEL_HEADER + type(self)._KERNEL_BODY_TEMPLATE.format(
             F_kname=self.name,
-            F_idx=self.F_idx,
+            F_arch=self.F_arch,
             F_hdim=self.F_hdim,
             F_dtype=FWD_DTYPE_MAP[self.F_dtype],
             F_bm0=self.F_tile.F_bm0,
@@ -574,9 +666,12 @@ class FmhaFwdKernel:
                 self.F_pipeline.F_kv_lookup_table
             ],
             F_pipeline_enum=PIPELINE_ENUM_MAP[self.F_pipeline.tag],
-            F_mask=get_mask_map(self.mask_impl)[self.F_pipeline.F_mask],
+            F_mask=get_mask_cpp_type(self.F_pipeline.F_mask),
             F_mode=MODE_MAP[self.F_mode],
             F_pipeline=FMHA_BATCH_PREFILL_PIPELINE_MAP[self.F_pipeline.tag],
+            F_kernel=self._get_cpp_kernel_class_name(self.F_pipeline.tag),
+            F_kargs_creator=self._get_cpp_kargs_creator_func_name(self.F_pipeline.tag),
+            F_pipeline_problem=self._get_cpp_pipeline_problem_name(self.F_pipeline.tag),
             F_page_size=self.F_page_size,
         )
 
@@ -592,10 +687,11 @@ class FmhaFwdKernel:
 
     @property
     def filename(self) -> str:
-        return self.name + ".cpp"
+        return f"{self.name}{self.F_arch.filename_suffix}.cpp"
 
     def api_trait(self) -> FmhaFwdApiTrait:
         return FmhaFwdApiTrait(
+            arch=self.F_arch,
             pipeline_tag=self.F_pipeline.tag,
             hdim=str(self.F_hdim),
             dtype=self.F_dtype,
@@ -624,7 +720,114 @@ class FmhaFwdKernel:
         )
 
 
-class KernelComponentFactory:
+@dataclass
+class ProblemContext:
+    dtype: str
+    mode: str
+    hdim: int
+
+
+@dataclass
+class KernelContext:
+    tile: FmhaFwdTileSize
+    pipeline: FmhaFwdPipeline
+    mask_impl: str
+
+
+CompatibilityRule = Callable[[ProblemContext, KernelContext], bool]
+
+
+def is_compatible(
+    problem_ctx: ProblemContext,
+    kernel_ctx: KernelContext,
+    rules: Iterable[CompatibilityRule],
+) -> bool:
+    return all(rule(problem_ctx, kernel_ctx) for rule in rules)
+
+
+def create_kernel(
+    arch: ArchTrait,
+    problem_ctx: ProblemContext,
+    kernel_ctx: KernelContext,
+    page_size: int,
+) -> FmhaFwdKernel:
+    return FmhaFwdKernel(
+        F_arch=arch,
+        F_dtype=problem_ctx.dtype,
+        F_mode=problem_ctx.mode,
+        F_hdim=problem_ctx.hdim,
+        F_tile=kernel_ctx.tile,
+        F_pipeline=kernel_ctx.pipeline,
+        mask_impl=kernel_ctx.mask_impl,
+        F_page_size=page_size,
+    )
+
+
+@dataclass(frozen=True)
+class Product:
+    name: str
+    rule: CompatibilityRule
+
+    def __call__(self, problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+        return self.rule(problem_ctx, kernel_ctx)
+
+
+class CompatibilityRuleFactory:
+    @staticmethod
+    def get_rules() -> List[CompatibilityRule]:
+        # in group mode, spad/skpad must be true, since we can't predict if seqlen of current batch need pad or not
+        def check_mode(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            if problem_ctx.mode == "group":
+                if (
+                    kernel_ctx.pipeline.F_spad != "t"
+                    or kernel_ctx.pipeline.F_skpad != "t"
+                ):
+                    return False
+            return True
+
+        def check_hdim(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            # NOTE: this is used to speedup deepseek prefill case, we don't gen training
+            if problem_ctx.hdim == 192 and kernel_ctx.tile.F_bn1 == 128:
+                if (
+                    kernel_ctx.pipeline.F_bias != "no"
+                    or kernel_ctx.pipeline.F_lse == "t"
+                    or kernel_ctx.pipeline.F_dropout == "t"
+                ):
+                    return False
+            return True
+
+        def check_feature(
+            problem_ctx: ProblemContext, kernel_ctx: KernelContext
+        ) -> bool:
+            # logits_soft_cap is only allowed if no bias
+            if not (
+                (
+                    kernel_ctx.pipeline.F_logits == "t"
+                    and kernel_ctx.pipeline.F_bias == "no"
+                )
+                or kernel_ctx.pipeline.F_logits == "f"
+            ):
+                return False
+            return True
+
+        return [check_mode, check_hdim, check_feature]
+
+
+class CompatibilityRuleFactoryGfx9(CompatibilityRuleFactory):
+    @classmethod
+    def get_rules(cls) -> List[CompatibilityRule]:
+        return CompatibilityRuleFactory.get_rules()
+
+
+class KernelComponentFactoryGfx9(CompatibilityRuleFactoryGfx9):
+    arch = ArchTrait(
+        "gfx9", preprocessor_check="defined(__gfx9__) && !defined(__gfx950__)"
+    )
+
+    @staticmethod
+    def supported_dtypes() -> Tuple[str]:
+        return ("fp16", "bf16", "fp8bf16")
+
     @staticmethod
     def get_hdim_tile_size_dict(dtype: str) -> Optional[dict]:
         if dtype in ["fp16", "bf16"]:
@@ -689,121 +892,158 @@ class KernelComponentFactory:
         return pipelines
 
 
-class CustomFactory(KernelComponentFactory):
+class CustomFactory(KernelComponentFactoryGfx9, CompatibilityRuleFactoryGfx9):
     @staticmethod
     def get_hdim_tile_size_dict(dtype: str) -> Optional[dict]:
-        result = KernelComponentFactory.get_hdim_tile_size_dict(dtype)
+        result = KernelComponentFactoryGfx9.get_hdim_tile_size_dict(dtype)
+        if result is None:
+            return None
         if dtype in ["fp16", "bf16"]:
             if 128 in result.keys():
                 result[128].insert(0, FmhaFwdTileSize( 64, 128, 64, 128, 64,  128,  4, 1, 1,  4, 1, 1,  16, 16, 16,  16, 16, 16,  -1, CppConstraint("get_num_blocks(128) < num_cus * min_cu_util_rate")))  # fmt: skip
         return result
 
 
+class KernelComponentFactoryGfx950(CustomFactory, CompatibilityRuleFactoryGfx9):
+    arch = ArchTrait("gfx950")
+
+    @classmethod
+    def get_rules(cls) -> List[CompatibilityRule]:
+        return CompatibilityRuleFactoryGfx9.get_rules()
+
+
+def get_factory(target: str):
+    # Place more specific architectures first
+    if target.startswith("gfx950"):
+        return KernelComponentFactoryGfx950
+    if target.startswith("gfx9"):
+        return CustomFactory
+    raise Exception(f"Unsupported device target {target}")
+
+
+def get_product(receipt: int) -> Product:
+    # Flash attention integration
+    if receipt in (2, 3):
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            cond = problem_ctx.dtype in ["fp16", "bf16"]
+            cond &= kernel_ctx.pipeline.F_vlayout == "row"
+            cond &= kernel_ctx.pipeline.F_bias in ["no", "alibi"]
+            cond &= kernel_ctx.pipeline.F_qscale == "no"
+            return cond
+
+        return Product(name="Flash attention integration", rule=fit)
+    # PyTorch integration
+    elif receipt == 4:
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            cond = problem_ctx.dtype in ["fp16", "bf16"]
+            cond &= kernel_ctx.pipeline.F_vlayout == "row"
+            cond &= kernel_ctx.pipeline.F_bias in ["no", "bias"]
+            cond &= kernel_ctx.pipeline.F_qscale == "no"
+            return cond
+
+        return Product(name="PyTorch integration", rule=fit)
+    # Aiter(mha_fwd) integration
+    elif receipt == 100:
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            cond = problem_ctx.dtype in ["fp16", "bf16"]
+            cond &= problem_ctx.mode == "batch"
+            cond &= kernel_ctx.pipeline.F_vlayout == "row"
+            cond &= kernel_ctx.pipeline.F_qscale == "no"
+            return cond
+
+        return Product(name="Aiter(mha_fwd) integration", rule=fit)
+    # Aiter(mha_batch_prefill) integration
+    elif receipt == 200:
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            cond = problem_ctx.dtype in ["fp16", "bf16", "fp8bf16"]
+            cond &= problem_ctx.mode == "group"
+            cond &= kernel_ctx.pipeline.F_vlayout == "row"
+            return cond
+
+        return Product(name="Aiter(mha_batch_prefill) integration", rule=fit)
+    # aiter::mha_batch_prefill C++ api integration
+    elif receipt == 600:
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            cond = problem_ctx.dtype in ["fp16", "bf16", "fp8bf16"]
+            cond &= problem_ctx.mode == "group"
+            cond &= kernel_ctx.pipeline.F_vlayout == "row"
+            cond &= kernel_ctx.pipeline.F_qscale == "no"
+            return cond
+
+        return Product(name="aiter::mha_batch_prefill C++ api integration", rule=fit)
+    # fp32 only
+    elif receipt in (800, 801):
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            return problem_ctx.dtype == "fp32"
+
+        return Product(name="fp32 only", rule=fit)
+    # Don't build fp32 by default
+    else:
+
+        def fit(problem_ctx: ProblemContext, kernel_ctx: KernelContext) -> bool:
+            return problem_ctx.dtype != "fp32"
+
+        return Product(name="Default", rule=fit)
+
+
+def check_page_size(
+    problem_ctx: ProblemContext, kernel_ctx: KernelContext, page_size: int
+) -> bool:
+    if page_size == 1 and kernel_ctx.pipeline.F_kv_memory_layout != "linear":
+        return False
+    # kv_blockscale requires page_size >= kN0 (tile.F_bn0)
+    # This ensures all tokens in a main loop iteration belong to the same page
+    if (
+        kernel_ctx.pipeline.F_qscale == "kv_blockscale"
+        and page_size < kernel_ctx.tile.F_bn0
+    ):
+        return False
+    return True
+
+
 def get_fwd_blobs(
-    kernel_filter: Optional[str], receipt, optdim_list, mask_impl
+    targets: List[str], kernel_filter: Optional[str], receipt, optdim_list, mask_impl
 ) -> Tuple[FmhaFwdApiPool, List[FmhaFwdKernel]]:
-    # TODO: we don't support tuning yet, so pick up one value for vlayout/pipeline/pad
-    #       support this in future
-
     gen = list()
-    api_pool = FmhaFwdApiPool(mask_impl)
+    api_pool = FmhaFwdApiPool()
 
-    for dtype in FWD_DTYPE_MAP.keys():
-        d = CustomFactory.get_hdim_tile_size_dict(dtype)
+    factories = get_factories_for_targets(targets, get_factory)
+
+    for factory, dtype in ((f, t) for f in factories for t in f.supported_dtypes()):
+        d = factory.get_hdim_tile_size_dict(dtype)
         if d is None:
             continue
-        # for hdim_str, mode, mask, bias, lse in itertools.product(d.keys(), MODE_MAP.keys(), MASK_MAP.keys(), ["t", "f"], ["t", "f"]):
         for (hdim, tiles), mode in itertools.product(d.items(), MODE_MAP.keys()):
+            if optdim_list != [-1]:
+                if hdim not in optdim_list:
+                    continue
             for tile, pipeline in itertools.product(
-                tiles, CustomFactory.get_pipelines(dtype, hdim, receipt, mask_impl)
+                tiles, factory.get_pipelines(dtype, hdim, receipt, mask_impl)
             ):
-                if mode == "group":
-                    if pipeline.F_spad != "t" or pipeline.F_skpad != "t":
-                        # in group mode, spad/skpad must be true, since we can't predict if seqlen of current batch need pad or not
-                        continue
-                if hdim == 192 and tile.F_bn1 == 128:
-                    # NOTE: this is used to speedup deepseek prefill case, we don't gen training
-                    if (
-                        pipeline.F_bias != "no"
-                        or pipeline.F_lse == "t"
-                        or pipeline.F_dropout == "t"
-                    ):
-                        continue
-                # logits_soft_cap is only allowed if no bias
-                if not (
-                    (pipeline.F_logits == "t" and pipeline.F_bias == "no")
-                    or pipeline.F_logits == "f"
-                ):
+                problem_ctx = ProblemContext(dtype=dtype, mode=mode, hdim=hdim)
+                kernel_ctx = KernelContext(
+                    tile=tile, pipeline=pipeline, mask_impl=mask_impl
+                )
+                rules = factory.get_rules()
+                product = get_product(receipt)
+
+                if not is_compatible(problem_ctx, kernel_ctx, [*rules, product]):
                     continue
 
-                # Generate kernels for both page_size=16 and page_size=1024
+                # Generate kernels for each supported page_size
                 for page_size in SUPPORTED_PAGE_SIZE:
-                    if page_size == 1 and pipeline.F_kv_memory_layout != "linear":
+                    if not check_page_size(problem_ctx, kernel_ctx, page_size):
                         continue
-                    # kv_blockscale requires page_size >= kN0 (tile.F_bn0)
-                    # This ensures all tokens in a main loop iteration belong to the same page
-                    if pipeline.F_qscale == "kv_blockscale" and page_size < tile.F_bn0:
-                        continue
-                    k = FmhaFwdKernel(
-                        F_idx=0,
-                        F_hdim=hdim,
-                        F_dtype=dtype,
-                        F_mode=mode,
-                        F_tile=tile,
-                        F_pipeline=pipeline,
-                        mask_impl=mask_impl,
-                        F_page_size=page_size,
-                    )
+
+                    k = create_kernel(factory.arch, problem_ctx, kernel_ctx, page_size)
                     if kernel_filter != "":
                         if not fnmatch.fnmatch(k.name, kernel_filter):
-                            continue
-                    if optdim_list != [-1]:
-                        if hdim not in optdim_list:
-                            continue
-                    # 2 - Flash attention integration
-                    if receipt in (2, 3):
-                        cond = dtype in ["fp16", "bf16"]
-                        cond &= pipeline.F_vlayout == "row"
-                        cond &= pipeline.F_bias in ["no", "alibi"]
-                        cond &= pipeline.F_qscale == "no"
-                        if not cond:
-                            continue
-                    # PyTorch integration
-                    elif receipt == 4:
-                        cond = dtype in ["fp16", "bf16"]
-                        cond &= pipeline.F_vlayout == "row"
-                        cond &= pipeline.F_bias in ["no", "bias"]
-                        cond &= pipeline.F_qscale == "no"
-                        if not cond:
-                            continue
-                    # Aiter(mha_fwd) integration
-                    elif receipt == 100:
-                        cond = dtype in ["fp16", "bf16"]
-                        cond &= mode == "batch"
-                        cond &= pipeline.F_vlayout == "row"
-                        cond &= pipeline.F_qscale == "no"
-                        if not cond:
-                            continue
-                    # Aiter(mha_batch_prefill) integration
-                    elif receipt == 200:
-                        cond = dtype in ["fp16", "bf16", "fp8bf16"]
-                        cond &= mode == "group"
-                        cond &= pipeline.F_vlayout == "row"
-                        if not cond:
-                            continue
-                    # aiter::mha_batch_prefill C++ api integration
-                    elif receipt == 600:
-                        cond = dtype in ["fp16", "bf16", "fp8bf16"]
-                        cond &= mode == "group"
-                        cond &= pipeline.F_vlayout == "row"
-                        cond &= pipeline.F_qscale == "no"
-                        if not cond:
-                            continue
-
-                    # fp32 only
-                    if receipt == 800 or receipt == 801:
-                        cond = dtype == "fp32"
-                        if not cond:
                             continue
 
                     api_pool.register_traits(k.api_trait())
@@ -813,11 +1053,25 @@ def get_fwd_blobs(
 
 
 def write_single_fwd_kernel(kernel: FmhaFwdKernel, autogen_dir: Path) -> None:
-    update_file(autogen_dir / kernel.filename, kernel.template)
+    update_file(autogen_dir / kernel.filename, kernel.render())
 
 
-def write_fwd_api(api_pool: FmhaFwdApiPool, autogen_dir: Path) -> None:
-    update_file(autogen_dir / FMHA_FWD_API_FILENAME, api_pool.api)
+def write_fwd_api(
+    api_pool: FmhaFwdApiPool,
+    autogen_dir: Path,
+) -> None:
+    def accept_only_v2(trait: FmhaFwdApiTrait) -> bool:
+        return True  # currently all are v2
+
+    content = "".join(
+        [
+            FMHA_FWD_KERNEL_HEADER,
+            FMHA_FWD_API_HEADER,
+            api_pool.render("fmha_batch_prefill_v2", filter_fn=accept_only_v2),
+            FMHA_FWD_API_FOOTER_TEMPLATE,
+        ]
+    )
+    update_file(autogen_dir / FMHA_FWD_API_FILENAME, content)
 
 
 def write_blobs(
@@ -828,7 +1082,9 @@ def write_blobs(
     optdim_list,
     mask_impl,
 ) -> None:
-    api_pool, kernels = get_fwd_blobs(kernel_filter, receipt, optdim_list, mask_impl)
+    api_pool, kernels = get_fwd_blobs(
+        targets, kernel_filter, receipt, optdim_list, mask_impl
+    )
     for kernel in kernels:
         write_single_fwd_kernel(kernel, output_dir)
     write_fwd_api(api_pool, output_dir)
@@ -843,7 +1099,9 @@ def list_blobs(
     mask_impl,
 ) -> None:
     with file_path.open("a") as f:
-        _, kernels = get_fwd_blobs(kernel_filter, receipt, optdim_list, mask_impl)
+        _, kernels = get_fwd_blobs(
+            targets, kernel_filter, receipt, optdim_list, mask_impl
+        )
         for kernel in kernels:
             f.write(str(file_path.parent / GEN_DIR / kernel.filename) + "\n")
         f.write(str(file_path.parent / GEN_DIR / FMHA_FWD_API_FILENAME) + "\n")
