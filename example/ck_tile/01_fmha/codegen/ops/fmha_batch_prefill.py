@@ -54,7 +54,9 @@ KV_LOOKUP_TABLE_ENUM_MAP = {
 
 FMHA_BATCH_PREFILL_PIPELINE_MAP = {
     "qr_async": "ck_tile::BlockFmhaBatchPrefillPipelineQRKSVSAsync",
+    "qr_async_trload_v3": "ck_tile::BlockFmhaBatchPrefillV3Pipeline",
 }
+
 
 FMHA_FWD_KERNEL_HEADER = """// SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2024, Advanced Micro Devices, Inc. All rights reserved.\n
@@ -212,9 +214,13 @@ float {F_func_name}([[maybe_unused]] fmha_batch_prefill_traits t, [[maybe_unused
 """
 
 FMHA_FWD_API_FOOTER_TEMPLATE = """
-float fmha_batch_prefill(fmha_batch_prefill_traits t, fmha_batch_prefill_args a, const ck_tile::stream_config& s) {
+float fmha_batch_prefill(fmha_batch_prefill_traits t, fmha_batch_prefill_args a, const ck_tile::stream_config& s) {{
+    if ({F_is_v3_enabled}) {{
+        float r = fmha_batch_prefill_v3(t, a, s);
+        if (r >= 0) return r;
+    }}
     return fmha_batch_prefill_v2(t, a, s);
-}
+}}
 """
 
 FMHA_FWD_API_PER_ARCH = """{F_if}({F_arch.device_name_check}) {{
@@ -295,7 +301,7 @@ class FmhaFwdApiTrait:
     def scheck(self) -> str:
         if self.mode == "group":
             return "true/*group mode spad always true*/"  # group mode only generate spad/skpad == true
-        if self.pipeline_tag in ["qr_async"]:
+        if self.pipeline_tag in ["qr_async", "qr_async_trload_v3"]:
             if self.spad == "t":
                 return "true"  # always support
             else:
@@ -312,7 +318,7 @@ class FmhaFwdApiTrait:
     def skcheck(self) -> str:
         if self.mode == "group":
             return "true/*group mode skpad always true*/"  # group mode only generate spad/skpad == true
-        if self.pipeline_tag in ["qr_async"]:
+        if self.pipeline_tag in ["qr_async", "qr_async_trload_v3"]:
             if self.skpad == "t":
                 return f"a.seqlen_k == 0 || a.seqlen_k % {self.bn0} != 0"
             else:
@@ -327,9 +333,11 @@ class FmhaFwdApiTrait:
 
     @property
     def dcheck(self) -> str:
-        if self.pipeline_tag in ["qr_async"]:
+        if self.pipeline_tag in ["qr_async", "qr_async_trload_v3"]:
             vec = int((32 * 4) / DTYPE_BITS[self.dtype])
             if self.dpad == "t":
+                return f"a.hdim_q % {vec} == 0"
+            elif self.pipeline_tag == "qr_async_trload_v3":
                 return f"a.hdim_q % {vec} == 0"
             else:
                 assert False
@@ -344,9 +352,11 @@ class FmhaFwdApiTrait:
 
     @property
     def dvcheck(self) -> str:
-        if self.pipeline_tag in ["qr_async"]:
+        if self.pipeline_tag in ["qr_async", "qr_async_trload_v3"]:
             vec = int((32 * 4) / DTYPE_BITS[self.dtype])
             if self.dvpad == "t":
+                return f"a.hdim_v % {vec} == 0"
+            elif self.pipeline_tag == "qr_async_trload_v3":
                 return f"a.hdim_v % {vec} == 0"
             else:
                 assert False
@@ -614,10 +624,14 @@ class FmhaFwdKernel:
 
     @classmethod
     def _get_cpp_kernel_class_name(cls, pipeline_tag):
+        if pipeline_tag == "qr_async_trload_v3":
+            return "ck_tile::FmhaBatchPrefillV3Kernel"
         return "ck_tile::FmhaBatchPrefillWithPagedKVCacheKernel"
 
     @classmethod
     def _get_cpp_kargs_creator_func_name(cls, pipeline_tag):
+        if pipeline_tag == "qr_async_trload_v3":
+            return "fmha_batch_prefill_v3_create_kargs_and_grids"
         return "fmha_batch_prefill_create_kargs_and_grids"
 
     @classmethod
@@ -907,9 +921,69 @@ class CustomFactory(KernelComponentFactoryGfx9, CompatibilityRuleFactoryGfx9):
 class KernelComponentFactoryGfx950(CustomFactory, CompatibilityRuleFactoryGfx9):
     arch = ArchTrait("gfx950")
 
+    @staticmethod
+    def get_hdim_tile_size_dict(dtype: str) -> Optional[dict]:
+        result = CustomFactory.get_hdim_tile_size_dict(dtype)
+        if result is None:
+            return None
+        if dtype in ["fp16", "bf16"]:
+            if 128 in result.keys():
+                result[128].append(FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 16,  32, 32, 16,  -1))  # fmt: skip
+        elif dtype in ["fp8bf16"]:
+            if 128 in result.keys():
+                result[128].append(FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 32,  32, 32, 32,  -1))  # fmt: skip
+        return result
+
+    @staticmethod
+    def get_pipelines(dtype, hdim, receipt, mask_impl) -> List[FmhaFwdPipeline]:
+        pipelines = KernelComponentFactoryGfx9.get_pipelines(
+            dtype, hdim, receipt, mask_impl
+        )
+        if dtype in ["fp16", "bf16"]:
+            if hdim == 128:
+                for logits, mask, lookup in itertools.product(
+                    ["t", "f"],
+                    ["no", "causal"],
+                    SUPPORTED_KV_LOOKUP_TABLE,
+                ):
+                    pipelines.append(FmhaFwdPipeline("qr_async_trload_v3", "row", "t", "t", "f", "f",
+                        logits, "no", "f", "f", "no", mask, "linear", lookup))  # fmt: skip
+        elif dtype in ["fp8bf16"]:
+            if hdim == 128:
+                for logits, mask, lookup in itertools.product(
+                    ["t", "f"],
+                    ["no", "causal"],
+                    SUPPORTED_KV_LOOKUP_TABLE,
+                ):
+                    pipelines.append(FmhaFwdPipeline("qr_async_trload_v3", "row", "t", "t", "f", "f",
+                        logits, "no", "f", "f", "pertensor", mask, "linear", lookup))  # fmt: skip
+        return pipelines
+
     @classmethod
     def get_rules(cls) -> List[CompatibilityRule]:
-        return CompatibilityRuleFactoryGfx9.get_rules()
+        rules = CompatibilityRuleFactoryGfx9.get_rules()
+
+        def check_tile_pipeline_v3(problem_ctx, kernel_ctx):
+            is_v3_dedicated_tile = (
+                kernel_ctx.tile.F_bm0 == 256
+                and (
+                    kernel_ctx.tile.F_rm0
+                    * kernel_ctx.tile.F_rn0
+                    * kernel_ctx.tile.F_rk0
+                )
+                == 8
+                and (
+                    kernel_ctx.tile.F_rm1
+                    * kernel_ctx.tile.F_rn1
+                    * kernel_ctx.tile.F_rk1
+                )
+                == 8
+            )
+            is_v3_pipeline = kernel_ctx.pipeline.tag == "qr_async_trload_v3"
+            return is_v3_dedicated_tile == is_v3_pipeline
+
+        rules.append(check_tile_pipeline_v3)
+        return rules
 
 
 def get_factory(target: str):
@@ -1060,15 +1134,23 @@ def write_fwd_api(
     api_pool: FmhaFwdApiPool,
     autogen_dir: Path,
 ) -> None:
+    def accept_only_v3(trait: FmhaFwdApiTrait) -> bool:
+        return trait.pipeline_tag == "qr_async_trload_v3"
+
     def accept_only_v2(trait: FmhaFwdApiTrait) -> bool:
-        return True  # currently all are v2
+        return not accept_only_v3(trait)
 
     content = "".join(
         [
             FMHA_FWD_KERNEL_HEADER,
             FMHA_FWD_API_HEADER,
             api_pool.render("fmha_batch_prefill_v2", filter_fn=accept_only_v2),
-            FMHA_FWD_API_FOOTER_TEMPLATE,
+            api_pool.render("fmha_batch_prefill_v3", filter_fn=accept_only_v3),
+            FMHA_FWD_API_FOOTER_TEMPLATE.format(
+                F_is_v3_enabled=BOOL_MAP[
+                    0 < api_pool.get_num_traits(filter_fn=accept_only_v3)
+                ]
+            ),
         ]
     )
     update_file(autogen_dir / FMHA_FWD_API_FILENAME, content)
