@@ -926,10 +926,8 @@ class KernelComponentFactoryGfx950(CustomFactory, CompatibilityRuleFactoryGfx9):
         result = CustomFactory.get_hdim_tile_size_dict(dtype)
         if result is None:
             return None
-        if dtype in ["fp16", "bf16"]:
-            if 128 in result.keys():
-                result[128].append(FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 16,  32, 32, 16,  -1))  # fmt: skip
-        elif dtype in ["fp8bf16"]:
+        # V3 tile (bm0=256, 8 warps) only for fp8bf16; bf16/fp16 remain on V2 tiles
+        if dtype in ["fp8bf16"]:
             if 128 in result.keys():
                 result[128].append(FmhaFwdTileSize(256, 64, 128, 128, 64, 128,  8, 1, 1,  8, 1, 1,  32, 32, 32,  32, 32, 32,  -1))  # fmt: skip
         return result
@@ -939,16 +937,8 @@ class KernelComponentFactoryGfx950(CustomFactory, CompatibilityRuleFactoryGfx9):
         pipelines = KernelComponentFactoryGfx9.get_pipelines(
             dtype, hdim, receipt, mask_impl
         )
-        if dtype in ["fp16", "bf16"]:
-            if hdim == 128:
-                for logits, mask, lookup in itertools.product(
-                    ["t", "f"],
-                    ["no", "causal"],
-                    SUPPORTED_KV_LOOKUP_TABLE,
-                ):
-                    pipelines.append(FmhaFwdPipeline("qr_async_trload_v3", "row", "t", "t", "f", "f",
-                        logits, "no", "f", "f", "no", mask, "linear", lookup))  # fmt: skip
-        elif dtype in ["fp8bf16"]:
+        # V3 pipeline only for fp8bf16; bf16/fp16 remain on V2 (qr_async)
+        if dtype in ["fp8bf16"]:
             if hdim == 128:
                 for logits, mask, lookup in itertools.product(
                     ["t", "f"],
