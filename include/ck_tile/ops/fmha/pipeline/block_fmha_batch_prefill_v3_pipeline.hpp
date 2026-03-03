@@ -563,15 +563,6 @@ struct BlockFmhaBatchPrefillV3Pipeline
                             k_dram_window,
                             number<-1>{},
                             bool_constant<false>{});
-            // Advance K page offsets to next tile (equivalent to move_tile_window).
-            // Guard: skip page table lookup when next position is past seqlen_k_end
-            // to avoid computing scatter-gather offsets from padding entries, which
-            // can produce buffer load addresses in unmapped GPU pages (XNACK fault).
-            current_k_seq += kN0;
-            if(current_k_seq < seqlen_k_end)
-            {
-                update_k_page_offsets_to(current_k_seq);
-            }
         };
 
         auto K_lds_load = [&](auto k_lds_read_idx) {
@@ -584,7 +575,20 @@ struct BlockFmhaBatchPrefillV3Pipeline
                             v_dram_window,
                             number<-1>{},
                             bool_constant<false>{});
-            // Guard: skip page table lookup when next position is past seqlen_k_end.
+        };
+
+        // Page offset advance lambdas — separated from K/V_mem_load so the
+        // guard branch doesn't fragment the async_load + ds_read basic block.
+        // Called at the very end of each phase, after Scheduler::schedule.
+        auto K_page_advance = [&]() {
+            current_k_seq += kN0;
+            if(current_k_seq < seqlen_k_end)
+            {
+                update_k_page_offsets_to(current_k_seq);
+            }
+        };
+
+        auto V_page_advance = [&]() {
             current_v_seq += kN0;
             if(current_v_seq < seqlen_k_end)
             {
@@ -930,6 +934,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     cl_load(memK, K_w0_lds_wr_idx, V_w0_lds_rd_idx);
                     Scheduler::schedule(cl_p, number<1>{});
                     fmha_mask(xdl_SP_p01_reg_idx);
+                    K_page_advance();
 
                     __builtin_amdgcn_sched_barrier(0);
                     // phase2
@@ -962,10 +967,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     {
                         result = false;
                     }
-                    else
-                    {
-                        // Page offsets are auto-advanced inside K_mem_load/V_mem_load
-                    }
+                    V_page_advance();
                 }
                 else
                 {
@@ -986,6 +988,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     cl_load(memV, V_w4_lds_wr_idx, K_w4_lds_rd_idx);
 
                     Scheduler::schedule(cl_p, number<0>{});
+                    V_page_advance();
                     __builtin_amdgcn_sched_barrier(0);
                     // phase1
                     ASM_MARKER("phase1 Wave4-7");
@@ -1012,16 +1015,13 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     cl_load(memK, K_w4_lds_wr_idx, V_w4_lds_rd_idx);
                     Scheduler::schedule(cl_p, number<2>{});
                     fmha_mask(xdl_SP_p01_reg_idx);
+                    K_page_advance();
 
                     // Page offset update at loop increment
                     kv_token_start += kN0;
                     if(num_total_loop <= ++i_total_loops)
                     {
                         result = false;
-                    }
-                    else
-                    {
-                        // Page offsets are auto-advanced inside K_mem_load/V_mem_load
                     }
 
                     __builtin_amdgcn_sched_barrier(0);
@@ -1076,8 +1076,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
             {
                 ASM_MARKER("before pre-stage");
                 // (1) load K0 to LDS & VGPR
-                // K_mem_load auto-advances: after load, k offsets point to seq+kN0
-                K_mem_load(number<0>{}); // mem_K0 at seq=start; k advances to start+kN0
+                K_mem_load(number<0>{}); // mem_K0 at seq=start
+                K_page_advance();        // k offsets now point to start+kN0
 
                 s_waitcnt<0>();
                 __builtin_amdgcn_s_barrier();
@@ -1088,12 +1088,12 @@ struct BlockFmhaBatchPrefillV3Pipeline
                 __builtin_amdgcn_s_barrier();
 
                 // (2) prefetch K1 and V0 to LDS in parallel with GEMM0
-                // V_mem_load auto-advances: after V0 load, v offsets point to start+kN0
-                // K_mem_load auto-advances: after K1 load, k offsets point to start+2*kN0
-                V_mem_load(number<0>{}); // mem_V0 at seq=start; v advances to start+kN0
+                V_mem_load(number<0>{}); // mem_V0 at seq=start
+                V_page_advance();        // v offsets now point to start+kN0
                 if(1 < num_total_loop)
                 {
-                    K_mem_load(number<1>{}); // mem_K1 at seq=start+kN0; k advances to start+2*kN0
+                    K_mem_load(number<1>{}); // mem_K1 at seq=start+kN0
+                    K_page_advance();        // k offsets now point to start+2*kN0
                 }
 
                 // (3) mfma (Q*K0) + softmax
@@ -1112,8 +1112,9 @@ struct BlockFmhaBatchPrefillV3Pipeline
 
                 if(2 < num_total_loop)
                 {
-                    // K2 at seq=start+2*kN0 (k offsets already point here after K1 load)
-                    K_mem_load(number<0>{}); // mem_K2; k advances to start+3*kN0
+                    // K2 at seq=start+2*kN0 (k offsets already point here)
+                    K_mem_load(number<0>{}); // mem_K2
+                    K_page_advance();        // k offsets now point to start+3*kN0
 
                     s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                     __builtin_amdgcn_s_barrier();
@@ -1124,10 +1125,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
 
             if(1 < num_total_loop)
             {
-                // V offsets already point to start+kN0 (auto-advanced after V0 load)
+                // V offsets point to start+kN0 (advanced after V0 load)
                 if(warp_group_id == 0)
                 {
                     V_mem_load(number<1>{}); // V1
+                    V_page_advance();        // v offsets now point to start+2*kN0
                     K_lds_load(number<1>{}); // K1
 
                     __builtin_amdgcn_s_setprio(0);
