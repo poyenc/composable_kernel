@@ -563,9 +563,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
                             k_dram_window,
                             number<-1>{},
                             bool_constant<false>{});
-            // Advance K page offsets to next tile (equivalent to move_tile_window)
+            // Advance K page offsets to next tile (equivalent to move_tile_window).
+            // Guard: skip page table lookup when next position is past seqlen_k_end
+            // to avoid computing scatter-gather offsets from padding entries, which
+            // can produce buffer load addresses in unmapped GPU pages (XNACK fault).
             current_k_seq += kN0;
-            update_k_page_offsets_to(current_k_seq);
+            if(current_k_seq < seqlen_k_end)
+            {
+                update_k_page_offsets_to(current_k_seq);
+            }
         };
 
         auto K_lds_load = [&](auto k_lds_read_idx) {
@@ -578,9 +584,12 @@ struct BlockFmhaBatchPrefillV3Pipeline
                             v_dram_window,
                             number<-1>{},
                             bool_constant<false>{});
-            // Advance V page offsets to next tile (equivalent to move_tile_window)
+            // Guard: skip page table lookup when next position is past seqlen_k_end.
             current_v_seq += kN0;
-            update_v_page_offsets_to(current_v_seq);
+            if(current_v_seq < seqlen_k_end)
+            {
+                update_v_page_offsets_to(current_v_seq);
+            }
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
