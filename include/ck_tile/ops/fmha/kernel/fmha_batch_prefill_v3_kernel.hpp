@@ -757,6 +757,13 @@ struct FmhaBatchPrefillV3Kernel
         const index_t stride_k_for_pipeline = kargs.stride_k;
         const index_t stride_v_for_pipeline = kargs.stride_v;
 
+        // Max valid index into page_idx[] array for this batch entry.
+        // For page_size=1: max_page_table_idx = seqlen_k - 1 (one entry per token)
+        // For page_size>1: max_page_table_idx = (seqlen_k - 1) / page_block_size
+        // Used by load_physical_pages() to clamp past-end lookups to valid entries.
+        const index_t max_page_table_idx =
+            kargs.seqlen_k > 0 ? (kargs.seqlen_k - 1) / kPageBlockSize : 0;
+
         auto o_acc_tile = [&] {
             if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR)
             {
@@ -799,7 +806,8 @@ struct FmhaBatchPrefillV3Kernel
                                       stride_k_for_pipeline,
                                       stride_v_for_pipeline,
                                       kargs.batch_stride_k,
-                                      kargs.batch_stride_v);
+                                      kargs.batch_stride_v,
+                                      max_page_table_idx);
             }
             else
             {
@@ -822,7 +830,8 @@ struct FmhaBatchPrefillV3Kernel
                                       stride_k_for_pipeline,
                                       stride_v_for_pipeline,
                                       kargs.batch_stride_k,
-                                      kargs.batch_stride_v);
+                                      kargs.batch_stride_v,
+                                      max_page_table_idx);
             }
         }();
 

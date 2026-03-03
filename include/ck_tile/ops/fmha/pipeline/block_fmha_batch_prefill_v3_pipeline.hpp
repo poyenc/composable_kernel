@@ -172,7 +172,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                index_t stride_k,
                index_t stride_v,
                index_t page_stride_k,
-               index_t page_stride_v) const
+               index_t page_stride_v,
+               index_t max_page_table_idx = 0x7FFFFFFF) const
     {
         using namespace ck_tile;
 
@@ -389,7 +390,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                             kN0 / NRepeat,
                             kKVMemoryLayout,
                             true,
-                            kN0>(page_idx, k_coord, current_seq_k, k_physical_pages);
+                            kN0>(
+            page_idx, k_coord, current_seq_k, k_physical_pages, max_page_table_idx);
 
         kv_offset_array_transform<statically_indexed_array<index_t, NRepeat>,
                                   decltype(k_coord),
@@ -460,7 +462,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                                 1,
                                 kKVMemoryLayout,
                                 false,
-                                kN0>(page_idx, v_coord, current_seq_k, v_physical_pages);
+                                kN0>(
+                page_idx, v_coord, current_seq_k, v_physical_pages, max_page_table_idx);
         };
 
         // Update V offsets using pre-loaded physical pages
@@ -514,8 +517,10 @@ struct BlockFmhaBatchPrefillV3Pipeline
         index_t current_k_seq = seqlen_k_start;
         index_t current_v_seq = seqlen_k_start;
 
+        // Page offset update functions.
+        // Do NOT write back to current_k/v_seq — callers manage the counters.
+        // Use target_seq_k directly for page table lookup and offset computation.
         auto update_k_page_offsets_to = [&](index_t target_seq_k) {
-            current_k_seq = target_seq_k;
             load_physical_pages<statically_indexed_array<index_t, NRepeat>,
                                 decltype(k_coord),
                                 0,
@@ -525,7 +530,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                                 kN0 / NRepeat,
                                 kKVMemoryLayout,
                                 true,
-                                kN0>(page_idx, k_coord, current_k_seq, k_physical_pages);
+                                kN0>(
+                page_idx, k_coord, target_seq_k, k_physical_pages, max_page_table_idx);
 
             kv_offset_array_transform<statically_indexed_array<index_t, NRepeat>,
                                       decltype(k_coord),
@@ -538,12 +544,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
                                       true,
                                       kN0,
                                       kVectorSize>(
-                k_physical_pages, stride_k, page_stride_k, k_coord, k_offsets, current_k_seq);
+                k_physical_pages, stride_k, page_stride_k, k_coord, k_offsets, target_seq_k);
             k_dram_window.update_page_idx(k_offsets);
         };
 
         auto update_v_page_offsets_to = [&](index_t target_seq_k) {
-            current_v_seq = target_seq_k;
             current_seq_k = target_seq_k; // sync for prefetch_v_physical_pages
             prefetch_v_physical_pages(number<0>{});
             update_v_offsets(number<0>{});
@@ -551,12 +556,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
         };
 
         // =====================================================================
-        // K/V mem load lambdas (scatter-gather with auto-advance)
-        //
-        // Unlike V3 fwd's move_tile_window (simple pointer arithmetic), paged KV
-        // requires recomputing page table offsets after each load. The advance
-        // happens INSIDE the load lambda to match V3 fwd's timing — each load
-        // prepares offsets for the NEXT load, just like move_tile_window.
+        // K/V mem load lambdas (load-only, no page offset update)
         // =====================================================================
         auto K_mem_load = [&](auto k_lds_write_idx) {
             async_load_tile(k_lds_window_store(k_lds_write_idx),
@@ -578,22 +578,19 @@ struct BlockFmhaBatchPrefillV3Pipeline
         };
 
         // Page offset advance lambdas — separated from K/V_mem_load so the
-        // guard branch doesn't fragment the async_load + ds_read basic block.
-        // Called at the very end of each phase, after Scheduler::schedule.
+        // load + ds_read stays in one uninterrupted basic block.
+        // Page table index clamping happens inside load_physical_pages() via
+        // max_page_table_idx, so the counters can advance freely past seqlen_k_end.
+        // Past-end lookups return a valid (but stale) page; the loaded data is
+        // discarded by the loop exit.
         auto K_page_advance = [&]() {
             current_k_seq += kN0;
-            if(current_k_seq < seqlen_k_end)
-            {
-                update_k_page_offsets_to(current_k_seq);
-            }
+            update_k_page_offsets_to(current_k_seq);
         };
 
         auto V_page_advance = [&]() {
             current_v_seq += kN0;
-            if(current_v_seq < seqlen_k_end)
-            {
-                update_v_page_offsets_to(current_v_seq);
-            }
+            update_v_page_offsets_to(current_v_seq);
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
@@ -1221,7 +1218,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                index_t stride_k,
                index_t stride_v,
                index_t page_stride_k,
-               index_t page_stride_v) const
+               index_t page_stride_v,
+               index_t max_page_table_idx = 0x7FFFFFFF) const
     {
         using namespace ck_tile;
 
@@ -1251,7 +1249,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                           stride_k,
                           stride_v,
                           page_stride_k,
-                          page_stride_v);
+                          page_stride_v,
+                          max_page_table_idx);
     }
 };
 
