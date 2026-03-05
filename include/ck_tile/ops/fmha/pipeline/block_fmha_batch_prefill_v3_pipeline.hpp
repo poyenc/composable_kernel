@@ -918,6 +918,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
                         {
                             asm volatile("s_nop 1");
                             __builtin_amdgcn_sched_barrier(0);
+                        } else {
+                            asm volatile("s_nop 3");
+                            __builtin_amdgcn_sched_barrier(0);
+                        }
+                    } else {
+                        if constexpr(std::is_same_v<KDataType, fp8_t>)
+                        {
+                            asm volatile("s_nop 3");
+                            __builtin_amdgcn_sched_barrier(0);
                         }
                     }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
@@ -947,8 +956,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
-                    asm volatile("s_nop 1");
-                    __builtin_amdgcn_sched_barrier(0);
+                    if constexpr(std::is_same_v<KDataType, fp8_t>)
+                    {
+                        asm volatile("s_nop 3");
+                        __builtin_amdgcn_sched_barrier(0);
+                    }
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
                     fmha_alu_D_upd_unpack();
                     Scheduler::schedule(cl_p, number<2>{});
@@ -1009,6 +1021,9 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     {
                         asm volatile("s_nop 1");
                         __builtin_amdgcn_sched_barrier(0);
+                    } else {
+                        asm volatile("s_nop 3");
+                        __builtin_amdgcn_sched_barrier(0);
                     }
                     cl_calc(xdl_SP_p01_reg_idx, gemm0);
                     fmha_alu1(xdl_SP_p23_reg_idx);
@@ -1045,6 +1060,9 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     if constexpr(!std::is_same_v<KDataType, fp8_t>)
                     {
                         asm volatile("s_nop 1");
+                        __builtin_amdgcn_sched_barrier(0);
+                    } else {
+                        asm volatile("s_nop 3");
                         __builtin_amdgcn_sched_barrier(0);
                     }
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
