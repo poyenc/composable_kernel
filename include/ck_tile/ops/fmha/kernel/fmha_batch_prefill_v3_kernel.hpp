@@ -55,8 +55,6 @@ struct FmhaBatchPrefillV3Kernel
     static constexpr auto kKVMemoryLayout = FmhaPipeline::kKVMemoryLayout;
     static_assert(kKVMemoryLayout == BlockAttentionKVCacheMemoryLayoutEnum::LINEAR_LAYOUT,
                   "V3 batch prefill only supports LINEAR_LAYOUT");
-    static_assert(QScaleEnum != BlockAttentionQuantScaleEnum::KV_BLOCKSCALE,
-                  "V3 batch prefill does not support KV_BLOCKSCALE quantization");
     static constexpr auto kKVLookupTable    = FmhaPipeline::Problem::kKVLookupTable;
     static constexpr index_t kPageBlockSize = FmhaPipeline::kPageBlockSize;
     static constexpr index_t kVectorSize    = FmhaPipeline::kVectorSize;
@@ -166,13 +164,25 @@ struct FmhaBatchPrefillV3Kernel
         const void* v_descale_ptr = nullptr;
     };
 
+    struct FmhaFwdKVBlockScaleKargs
+    {
+        const void* q_descale_ptr                       = nullptr;
+        const void* k_descale_ptr                       = nullptr;
+        const void* v_descale_ptr                       = nullptr;
+        ck_tile::index_t nblock_stride_kv_block_descale = 0;
+        ck_tile::index_t nhead_stride_kv_block_descale  = 0;
+    };
+
     struct FmhaFwdBatchModeKargs
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
           std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
-          std::conditional_t<QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
-                             FmhaFwdCommonQScaleKargs,
-                             FmhaFwdEmptyKargs<2>>,
+          std::conditional_t<
+              QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
+              FmhaFwdCommonQScaleKargs,
+              std::conditional_t<QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::KV_BLOCKSCALE,
+                                 FmhaFwdKVBlockScaleKargs,
+                                 FmhaFwdEmptyKargs<2>>>,
           std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<3>>
     {
         ck_tile::index_t batch_stride_q;
@@ -185,9 +195,12 @@ struct FmhaBatchPrefillV3Kernel
         : FmhaFwdCommonKargs,
           std::conditional_t<kHasMask, FmhaFwdMaskKargs, FmhaFwdEmptyKargs<0>>,
           std::conditional_t<kStoreLSE, FmhaFwdCommonLSEKargs, FmhaFwdEmptyKargs<1>>,
-          std::conditional_t<QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
-                             FmhaFwdCommonQScaleKargs,
-                             FmhaFwdEmptyKargs<2>>,
+          std::conditional_t<
+              QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::PERTENSOR,
+              FmhaFwdCommonQScaleKargs,
+              std::conditional_t<QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::KV_BLOCKSCALE,
+                                 FmhaFwdKVBlockScaleKargs,
+                                 FmhaFwdEmptyKargs<2>>>,
           std::conditional_t<kHasLogitsSoftCap, FmhaFwdLogitsSoftCapKargs, FmhaFwdEmptyKargs<3>>
     {
         const int32_t* seqstart_q_ptr;
@@ -241,7 +254,9 @@ struct FmhaBatchPrefillV3Kernel
               ck_tile::index_t batch_stride_o,
               ck_tile::index_t window_size_left,
               ck_tile::index_t window_size_right,
-              ck_tile::index_t mask_type)
+              ck_tile::index_t mask_type,
+              ck_tile::index_t nblock_stride_kv_block_descale = 0,
+              ck_tile::index_t nhead_stride_kv_block_descale  = 0)
     {
         Kargs kargs{{q_ptr,
                      k_ptr,
@@ -296,6 +311,14 @@ struct FmhaBatchPrefillV3Kernel
             kargs.k_descale_ptr = k_descale_ptr;
             kargs.v_descale_ptr = v_descale_ptr;
         }
+        else if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+        {
+            kargs.q_descale_ptr                  = q_descale_ptr;
+            kargs.k_descale_ptr                  = k_descale_ptr;
+            kargs.v_descale_ptr                  = v_descale_ptr;
+            kargs.nblock_stride_kv_block_descale = nblock_stride_kv_block_descale;
+            kargs.nhead_stride_kv_block_descale  = nhead_stride_kv_block_descale;
+        }
         if constexpr(kHasLogitsSoftCap)
         {
             kargs.init_logits_soft_cap(logits_soft_cap);
@@ -338,7 +361,9 @@ struct FmhaBatchPrefillV3Kernel
               ck_tile::index_t batch_stride_v,
               ck_tile::index_t window_size_left,
               ck_tile::index_t window_size_right,
-              ck_tile::index_t mask_type)
+              ck_tile::index_t mask_type,
+              ck_tile::index_t nblock_stride_kv_block_descale = 0,
+              ck_tile::index_t nhead_stride_kv_block_descale  = 0)
     {
         Kargs kargs{{q_ptr,
                      k_ptr,
@@ -390,6 +415,14 @@ struct FmhaBatchPrefillV3Kernel
             kargs.q_descale_ptr = q_descale_ptr;
             kargs.k_descale_ptr = k_descale_ptr;
             kargs.v_descale_ptr = v_descale_ptr;
+        }
+        else if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+        {
+            kargs.q_descale_ptr                  = q_descale_ptr;
+            kargs.k_descale_ptr                  = k_descale_ptr;
+            kargs.v_descale_ptr                  = v_descale_ptr;
+            kargs.nblock_stride_kv_block_descale = nblock_stride_kv_block_descale;
+            kargs.nhead_stride_kv_block_descale  = nhead_stride_kv_block_descale;
         }
         if constexpr(kHasLogitsSoftCap)
         {
@@ -733,6 +766,11 @@ struct FmhaBatchPrefillV3Kernel
                 float k_descale = *(reinterpret_cast<const float*>(kargs.k_descale_ptr));
                 return kargs.scale_s * q_descale * k_descale;
             }
+            else if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+                float q_descale = *(reinterpret_cast<const float*>(kargs.q_descale_ptr));
+                return kargs.scale_s * q_descale;
+            }
             else
             {
                 return kargs.scale_s;
@@ -808,6 +846,37 @@ struct FmhaBatchPrefillV3Kernel
                                       kargs.batch_stride_k,
                                       kargs.batch_stride_v,
                                       max_page_table_idx);
+            }
+            else if constexpr(QScaleEnum == ck_tile::BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+                const float* k_descale_ptr = reinterpret_cast<const float*>(kargs.k_descale_ptr);
+                const float* v_descale_ptr = reinterpret_cast<const float*>(kargs.v_descale_ptr);
+
+                return FmhaPipeline{}(partition_index,
+                                      q_dram_window,
+                                      k_dram_window,
+                                      v_dram_window,
+                                      lse_dram_window,
+                                      mask,
+                                      scale_s,
+                                      variant,
+                                      variant_params,
+                                      block_indices,
+                                      smem_k0,
+                                      smem_k1,
+                                      smem_v0,
+                                      smem_v1,
+                                      smem_ptr,
+                                      page_idx,
+                                      stride_k_for_pipeline,
+                                      stride_v_for_pipeline,
+                                      kargs.batch_stride_k,
+                                      kargs.batch_stride_v,
+                                      max_page_table_idx,
+                                      k_descale_ptr,
+                                      v_descale_ptr,
+                                      kargs.nblock_stride_kv_block_descale,
+                                      kargs.nhead_stride_kv_block_descale);
             }
             else
             {

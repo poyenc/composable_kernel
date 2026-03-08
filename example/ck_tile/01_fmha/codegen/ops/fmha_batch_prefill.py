@@ -940,13 +940,14 @@ class KernelComponentFactoryGfx950(CustomFactory, CompatibilityRuleFactoryGfx9):
         # V3 pipeline only for fp8bf16; bf16/fp16 remain on V2 (qr_async)
         if dtype in ["fp8bf16"]:
             if hdim == 128:
-                for logits, mask, lookup in itertools.product(
+                for logits, mask, lookup, qscale in itertools.product(
                     ["t", "f"],
                     ["no", "causal"],
                     SUPPORTED_KV_LOOKUP_TABLE,
+                    ["pertensor", "kv_blockscale"],
                 ):
                     pipelines.append(FmhaFwdPipeline("qr_async_trload_v3", "row", "t", "t", "f", "f",
-                        logits, "no", "f", "f", "pertensor", mask, "linear", lookup))  # fmt: skip
+                        logits, "no", "f", "f", qscale, mask, "linear", lookup))  # fmt: skip
         return pipelines
 
     @classmethod

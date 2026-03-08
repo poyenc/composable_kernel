@@ -84,10 +84,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
     static constexpr bool kSkipMinSeqlenQ   = Problem::kSkipMinSeqlenQ;
     static_assert((BiasEnum == BlockAttentionBiasEnum::NO_BIAS && !kHasDropout && !kSkipMinSeqlenQ),
                   "enable unsupported features");
-    static_assert(QScaleEnum != BlockAttentionQuantScaleEnum::KV_BLOCKSCALE,
-                  "V3 batch prefill does not support KV_BLOCKSCALE quantization");
+    static_assert(QScaleEnum != BlockAttentionQuantScaleEnum::KV_BLOCKSCALE ||
+                      kPageBlockSize >= kN0,
+                  "KV_BLOCKSCALE requires kPageBlockSize >= kN0");
     static_assert(!kPadHeadDimQ && !kPadHeadDimV,
                   "V3 batch prefill requires hdim=128 which is always aligned, no padding needed");
+
+    // For KV_BLOCKSCALE: shift value for exp2(x + shift) to scale P to [0, 2^shift]
+    static constexpr float OCP_FP8_SHIFT  = 8.0f;
+    static constexpr float FNUZ_FP8_SHIFT = 7.0f;
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -173,7 +178,12 @@ struct BlockFmhaBatchPrefillV3Pipeline
                index_t stride_v,
                index_t page_stride_k,
                index_t page_stride_v,
-               index_t max_page_table_idx = 0x7FFFFFFF) const
+               index_t max_page_table_idx = 0x7FFFFFFF,
+               // KV_BLOCKSCALE parameters
+               const float* k_descale_ptr             = nullptr,
+               const float* v_descale_ptr             = nullptr,
+               index_t nblock_stride_kv_block_descale = 0,
+               index_t nhead_stride_kv_block_descale  = 0) const
     {
         using namespace ck_tile;
 
@@ -606,6 +616,26 @@ struct BlockFmhaBatchPrefillV3Pipeline
         SMPLComputeDataType o_acc_scale; // rescale o_acc in fmha_alu1() & fmha_alu_D_upd()
         statically_indexed_array<decltype(sp(number<0>{}).sp_compute), 2> sp_delta;
 
+        // KV_BLOCKSCALE: per-page descale factors, double-buffered by LDS buffer index.
+        // saved_k_descale[buf] / saved_v_descale[buf] hold descales for the K tile
+        // currently in LDS buffer `buf`. Updated when a new K tile's pages are available,
+        // before K_page_issue overwrites k_physical_pages.
+        [[maybe_unused]] float saved_k_descale[2] = {1.0f, 1.0f};
+        [[maybe_unused]] float saved_v_descale[2] = {1.0f, 1.0f};
+
+        // Load descale factors from current k_physical_pages[0] and store into slot `buf_idx`.
+        // Must be called BEFORE K_page_issue() overwrites k_physical_pages.
+        auto save_descales = [&](index_t buf_idx) {
+            if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+                const index_t scale_offset =
+                    k_physical_pages[number<0>{}] * nblock_stride_kv_block_descale +
+                    block_indices.kv_head_idx * nhead_stride_kv_block_descale;
+                saved_k_descale[buf_idx] = k_descale_ptr[scale_offset];
+                saved_v_descale[buf_idx] = v_descale_ptr[scale_offset];
+            }
+        };
+
         auto fmha_logits_trans = [&](auto sp_reg_idx) {
             if constexpr(kHasLogitsSoftCap)
             {
@@ -640,6 +670,18 @@ struct BlockFmhaBatchPrefillV3Pipeline
             block_tile_reduce_sync(m_latest, f_max, bool_constant<false>{});
 #endif
             m = m_latest;
+
+            // KV_BLOCKSCALE: subtract FP8 shift from row max so that
+            // exp2(s*scale_s - (m*scale_s - shift)) = exp2(s*scale_s - m*scale_s + shift)
+            // implicitly scales P by 2^shift, replacing explicit scale_p multiply
+            if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+#if CK_TILE_USE_OCP_FP8
+                m.thread_buf_[0] -= OCP_FP8_SHIFT;
+#else
+                m.thread_buf_[0] -= FNUZ_FP8_SHIFT;
+#endif
+            }
 
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
@@ -751,9 +793,22 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.k_tile,
                                       sequence<0, (k0_loops - 1) * kK0>{},
                                       sequence<kN0, k0_loops * kK0>{}));
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+                {
+                    constexpr index_t si = decltype(sp_reg_idx)::value;
+                    tile_elementwise_inout([&](auto& x) { x *= saved_k_descale[si]; },
+                                           sp(sp_reg_idx).sp_compute);
+                }
             }
             else
             {
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+                {
+                    constexpr index_t si = decltype(sp_reg_idx)::value;
+                    float inv_v_descale  = 1.0f / saved_v_descale[si];
+                    tile_elementwise_inout([&inv_v_descale](auto& x) { x *= inv_v_descale; },
+                                           o_acc);
+                }
                 gemm_1(o_acc,
                        get_slice_tile(sp(sp_reg_idx).p,
                                       sequence<0, (k1_loops - 1) * kK1>{},
@@ -761,6 +816,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.v_tile,
                                       sequence<0, (k1_loops - 1) * kK1>{},
                                       sequence<kN1, k1_loops * kK1>{}));
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+                {
+                    constexpr index_t si = decltype(sp_reg_idx)::value;
+                    tile_elementwise_inout([&](auto& x) { x *= saved_v_descale[si]; }, o_acc);
+                }
             }
         };
 
@@ -775,9 +835,22 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.k_tile,
                                       sequence<0, (k0_loops - 1) * kK0>{},
                                       sequence<kN0, k0_loops * kK0>{}));
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+                {
+                    constexpr index_t si = decltype(sp_reg_idx)::value;
+                    tile_elementwise_inout([&](auto& x) { x *= saved_k_descale[si]; },
+                                           sp(sp_reg_idx).sp_compute);
+                }
             }
             else
             {
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+                {
+                    constexpr index_t si = decltype(sp_reg_idx)::value;
+                    float inv_v_descale  = 1.0f / saved_v_descale[si];
+                    tile_elementwise_inout([&inv_v_descale](auto& x) { x *= inv_v_descale; },
+                                           o_acc);
+                }
                 gemm_1(o_acc,
                        get_slice_tile(sp(sp_reg_idx).p,
                                       sequence<0, (k1_loops - 1) * kK1>{},
@@ -785,6 +858,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.v_tile,
                                       sequence<0, (k1_loops - 1) * kK1>{},
                                       sequence<kN1, k1_loops * kK1>{}));
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+                {
+                    constexpr index_t si = decltype(sp_reg_idx)::value;
+                    tile_elementwise_inout([&](auto& x) { x *= saved_v_descale[si]; }, o_acc);
+                }
                 fmha_alu0(number<1>{} - sp_reg_idx);
             }
         };
@@ -918,11 +996,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
                         {
                             asm volatile("s_nop 1");
                             __builtin_amdgcn_sched_barrier(0);
-                        } else {
+                        }
+                        else
+                        {
                             asm volatile("s_nop 3");
                             __builtin_amdgcn_sched_barrier(0);
                         }
-                    } else {
+                    }
+                    else
+                    {
                         if constexpr(std::is_same_v<KDataType, fp8_t>)
                         {
                             asm volatile("s_nop 3");
@@ -941,6 +1023,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     __builtin_amdgcn_sched_barrier(0);
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
+                    save_descales(K_w0_lds_wr_idx);
                     K_page_issue();                                  // global_load_dword FIRST
                     __builtin_amdgcn_sched_barrier(0);               // prevent reorder
                     cl_load(memK, K_w0_lds_wr_idx, V_w0_lds_rd_idx); // buffer_loads SECOND
@@ -1021,7 +1104,9 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     {
                         asm volatile("s_nop 1");
                         __builtin_amdgcn_sched_barrier(0);
-                    } else {
+                    }
+                    else
+                    {
                         asm volatile("s_nop 3");
                         __builtin_amdgcn_sched_barrier(0);
                     }
@@ -1035,6 +1120,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     ASM_MARKER("phase2 Wave4-7");
                     __builtin_amdgcn_s_barrier();
                     __builtin_amdgcn_sched_barrier(0);
+                    save_descales(K_w4_lds_wr_idx);
                     K_page_issue();                                  // global_load_dword FIRST
                     __builtin_amdgcn_sched_barrier(0);               // prevent reorder
                     cl_load(memK, K_w4_lds_wr_idx, V_w4_lds_rd_idx); // buffer_loads SECOND
@@ -1061,7 +1147,9 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     {
                         asm volatile("s_nop 1");
                         __builtin_amdgcn_sched_barrier(0);
-                    } else {
+                    }
+                    else
+                    {
                         asm volatile("s_nop 3");
                         __builtin_amdgcn_sched_barrier(0);
                     }
@@ -1104,6 +1192,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
             // pre-stage
             {
                 ASM_MARKER("before pre-stage");
+                // Save descales for K0 (buf 0) before K_page_issue overwrites k_physical_pages
+                save_descales(0);
                 // (1) load K0 to LDS & VGPR
                 K_page_issue();          // global_load for K1 offset (FIRST)
                 K_mem_load(number<0>{}); // buffer_load K0 (SECOND)
@@ -1123,6 +1213,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
                 V_page_consume();        // s_waitcnt vmcnt(V_mem_su_ld_insts), transform
                 if(1 < num_total_loop)
                 {
+                    // Save descales for K1 (buf 1) — k_physical_pages still has K1 pages
+                    save_descales(1);
                     K_page_issue();          // global_load for K2 offset
                     K_mem_load(number<1>{}); // buffer_load K1
                     K_page_consume();        // s_waitcnt vmcnt(K_mem_su_ld_insts), transform
@@ -1144,6 +1236,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
 
                 if(2 < num_total_loop)
                 {
+                    // Save descales for K2 (buf 0) — k_physical_pages has K2 pages
+                    save_descales(0);
                     // K2 at seq=start+2*kN0 (k offsets already point here)
                     K_page_issue();          // global_load for K3 offset
                     K_mem_load(number<0>{}); // buffer_load K2
@@ -1256,7 +1350,12 @@ struct BlockFmhaBatchPrefillV3Pipeline
                index_t stride_v,
                index_t page_stride_k,
                index_t page_stride_v,
-               index_t max_page_table_idx = 0x7FFFFFFF) const
+               index_t max_page_table_idx = 0x7FFFFFFF,
+               // KV_BLOCKSCALE parameters
+               const float* k_descale_ptr             = nullptr,
+               const float* v_descale_ptr             = nullptr,
+               index_t nblock_stride_kv_block_descale = 0,
+               index_t nhead_stride_kv_block_descale  = 0) const
     {
         using namespace ck_tile;
 
@@ -1287,7 +1386,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
                           stride_v,
                           page_stride_k,
                           page_stride_v,
-                          max_page_table_idx);
+                          max_page_table_idx,
+                          k_descale_ptr,
+                          v_descale_ptr,
+                          nblock_stride_kv_block_descale,
+                          nhead_stride_kv_block_descale);
     }
 };
 

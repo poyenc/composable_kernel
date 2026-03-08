@@ -1357,7 +1357,9 @@ auto fmha_batch_prefill_v3_create_kargs_and_grids(fmha_batch_prefill_args args)
                                          args.batch_stride_v,
                                          args.window_size_left,
                                          args.window_size_right,
-                                         args.mask_type);
+                                         args.mask_type,
+                                         args.nblock_stride_kv_block_descale,
+                                         args.nhead_stride_kv_block_descale);
         }
         else
         {
@@ -1395,7 +1397,9 @@ auto fmha_batch_prefill_v3_create_kargs_and_grids(fmha_batch_prefill_args args)
                                          args.batch_stride_o,
                                          args.window_size_left,
                                          args.window_size_right,
-                                         args.mask_type);
+                                         args.mask_type,
+                                         args.nblock_stride_kv_block_descale,
+                                         args.nhead_stride_kv_block_descale);
         }
     }();
 
