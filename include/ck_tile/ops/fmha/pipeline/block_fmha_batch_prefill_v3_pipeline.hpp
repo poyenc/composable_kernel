@@ -622,6 +622,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
         // before K_page_issue overwrites k_physical_pages.
         [[maybe_unused]] float saved_k_descale[2] = {1.0f, 1.0f};
         [[maybe_unused]] float saved_v_descale[2] = {1.0f, 1.0f};
+        // v_descale of the most recent GEMM1 (1.0 = identity for first iteration).
+        // o_acc is maintained in v_descale_prev-scaled space; the ratio
+        // v_descale_prev / saved_v_descale[si] is folded into o_acc_scale.
+        [[maybe_unused]] float v_descale_prev = 1.0f;
+        // k_descale-adjusted scale_s for sp_delta FMA: scale_s_k = scale_s * k_descale[i].
+        // The full-tile k_descale multiply on sp_compute is folded into:
+        //   (1) scalar row_max: m_raw * k_descale, and
+        //   (2) sp_delta FMA b-term: fma(s_raw, scale_s_k, -scale_s * m)
+        [[maybe_unused]] float scale_s_k = scale_s;
 
         // Load descale factors from current k_physical_pages[0] and store into slot `buf_idx`.
         // Must be called BEFORE K_page_issue() overwrites k_physical_pages.
@@ -652,12 +661,27 @@ struct BlockFmhaBatchPrefillV3Pipeline
             }
         };
 
+        // Whether k_descale can be folded into scalar row_max + sp_delta FMA.
+        // Not possible with LogitsSoftCap: the logits transform (tanh) needs
+        // descaled values, so the full-tile k_descale pass must remain.
+        static constexpr bool kFoldKDescale =
+            (QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE) && !kHasLogitsSoftCap;
+
         auto fmha_alu0 = [&](auto sp_reg_idx) {
             m_old = m; // m{j-1}
             static_assert(m.thread_buf_.size() == 1,
                           "assuming that each thread holds 1 rowmax value");
+            // kFoldKDescale: reduce on raw (undescaled) values with -MAX_FLOAT init,
+            // then fold k_descale into the scalar row_max. This eliminates the
+            // full-tile pk_mul_f32 pass after GEMM0 (sp_compute *= k_descale).
+            auto m_init = [&]() {
+                if constexpr(kFoldKDescale)
+                    return -numeric<SMPLComputeDataType>::max();
+                else
+                    return m.thread_buf_[0];
+            }();
             auto m_latest = block_tile_reduce<SMPLComputeDataType>(
-                sp(sp_reg_idx).sp_compute, sequence<1>{}, f_max, m.thread_buf_[0]);
+                sp(sp_reg_idx).sp_compute, sequence<1>{}, f_max, m_init);
 #if defined(__gfx950__)
             int32x2_t swapped_regs =
                 __builtin_amdgcn_permlane32_swap(bit_cast<int32_t>(m_latest.thread_buf_[0]),
@@ -669,19 +693,37 @@ struct BlockFmhaBatchPrefillV3Pipeline
 #else
             block_tile_reduce_sync(m_latest, f_max, bool_constant<false>{});
 #endif
-            m = m_latest;
 
-            // KV_BLOCKSCALE: subtract FP8 shift from row max so that
-            // exp2(s*scale_s - (m*scale_s - shift)) = exp2(s*scale_s - m*scale_s + shift)
-            // implicitly scales P by 2^shift, replacing explicit scale_p multiply
-            if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            if constexpr(kFoldKDescale)
             {
+                constexpr index_t si = decltype(sp_reg_idx)::value;
+                // Fold k_descale into scalar row_max: max(s_raw) * d_i == max(s_raw * d_i)
+                m_latest.thread_buf_[0] *= saved_k_descale[si];
+                // Running max in descaled domain (same leaky-max as before)
+                m_latest.thread_buf_[0] =
+                    f_max(m_latest.thread_buf_[0], m_old.thread_buf_[0]);
+                // FP8 shift: exp2(s*ss_k - ss*m) implicitly scales P by 2^shift
 #if CK_TILE_USE_OCP_FP8
-                m.thread_buf_[0] -= OCP_FP8_SHIFT;
+                m_latest.thread_buf_[0] -= OCP_FP8_SHIFT;
 #else
-                m.thread_buf_[0] -= FNUZ_FP8_SHIFT;
+                m_latest.thread_buf_[0] -= FNUZ_FP8_SHIFT;
+#endif
+                // Precompute k_descale-adjusted scale_s for sp_delta FMA
+                scale_s_k = scale_s * saved_k_descale[si];
+            }
+            else if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+                // LogitsSoftCap + KV_BLOCKSCALE: sp_compute already descaled by
+                // full-tile pass in gemm/cl_calc. Reduction init was m_old, so
+                // m_latest already incorporates the running max. Apply FP8 shift.
+#if CK_TILE_USE_OCP_FP8
+                m_latest.thread_buf_[0] -= OCP_FP8_SHIFT;
+#else
+                m_latest.thread_buf_[0] -= FNUZ_FP8_SHIFT;
 #endif
             }
+
+            m = m_latest;
 
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
@@ -692,6 +734,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     {
                         sp_delta(sp_reg_idx)(i_j_idx) =
                             sp(sp_reg_idx).sp_compute(i_j_idx) - m(i_j_idx);
+                    }
+                    else if constexpr(kFoldKDescale)
+                    {
+                        // fma(s_raw, scale_s * k_descale, -scale_s * m)
+                        // = scale_s * (s_raw * k_descale - m_latest + S)
+                        sp_delta(sp_reg_idx)(i_j_idx) = detail::fma_impl_vsv(
+                            sp(sp_reg_idx).sp_compute(i_j_idx),
+                            scale_s_k,
+                            -scale_s * m(i_j_idx));
                     }
                     else
                     {
@@ -782,6 +833,27 @@ struct BlockFmhaBatchPrefillV3Pipeline
             });
         };
 
+        // KV_BLOCKSCALE k_descale full-tile pass: only needed when k_descale
+        // cannot be folded into fmha_alu0 (i.e. LogitsSoftCap requires descaled input).
+        auto apply_k_descale = [&](auto sp_reg_idx) {
+            if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE &&
+                         !kFoldKDescale)
+            {
+                constexpr index_t si = decltype(sp_reg_idx)::value;
+                fp32x2_t pk_k_descale;
+                pk_k_descale.x = saved_k_descale[si];
+                pk_k_descale.y = saved_k_descale[si];
+                static_for<0, sp(sp_reg_idx).sp_compute.thread_buf_.size(), 2>{}([&](auto idx) {
+                    fp32x2_t input;
+                    input.x     = sp(sp_reg_idx).sp_compute.thread_buf_[idx];
+                    input.y     = sp(sp_reg_idx).sp_compute.thread_buf_[idx + 1];
+                    auto output = detail::pk_mul_f32(input, pk_k_descale);
+                    sp(sp_reg_idx).sp_compute.thread_buf_[idx]     = output.x;
+                    sp(sp_reg_idx).sp_compute.thread_buf_[idx + 1] = output.y;
+                });
+            }
+        };
+
         auto gemm = [&](auto sp_reg_idx, auto gemm_idx) {
             if constexpr(gemm_idx == 0)
             {
@@ -793,22 +865,10 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.k_tile,
                                       sequence<0, (k0_loops - 1) * kK0>{},
                                       sequence<kN0, k0_loops * kK0>{}));
-                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
-                {
-                    constexpr index_t si = decltype(sp_reg_idx)::value;
-                    tile_elementwise_inout([&](auto& x) { x *= saved_k_descale[si]; },
-                                           sp(sp_reg_idx).sp_compute);
-                }
+                apply_k_descale(sp_reg_idx);
             }
             else
             {
-                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
-                {
-                    constexpr index_t si = decltype(sp_reg_idx)::value;
-                    float inv_v_descale  = 1.0f / saved_v_descale[si];
-                    tile_elementwise_inout([&inv_v_descale](auto& x) { x *= inv_v_descale; },
-                                           o_acc);
-                }
                 gemm_1(o_acc,
                        get_slice_tile(sp(sp_reg_idx).p,
                                       sequence<0, (k1_loops - 1) * kK1>{},
@@ -816,11 +876,6 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.v_tile,
                                       sequence<0, (k1_loops - 1) * kK1>{},
                                       sequence<kN1, k1_loops * kK1>{}));
-                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
-                {
-                    constexpr index_t si = decltype(sp_reg_idx)::value;
-                    tile_elementwise_inout([&](auto& x) { x *= saved_v_descale[si]; }, o_acc);
-                }
             }
         };
 
@@ -835,22 +890,10 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.k_tile,
                                       sequence<0, (k0_loops - 1) * kK0>{},
                                       sequence<kN0, k0_loops * kK0>{}));
-                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
-                {
-                    constexpr index_t si = decltype(sp_reg_idx)::value;
-                    tile_elementwise_inout([&](auto& x) { x *= saved_k_descale[si]; },
-                                           sp(sp_reg_idx).sp_compute);
-                }
+                apply_k_descale(sp_reg_idx);
             }
             else
             {
-                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
-                {
-                    constexpr index_t si = decltype(sp_reg_idx)::value;
-                    float inv_v_descale  = 1.0f / saved_v_descale[si];
-                    tile_elementwise_inout([&inv_v_descale](auto& x) { x *= inv_v_descale; },
-                                           o_acc);
-                }
                 gemm_1(o_acc,
                        get_slice_tile(sp(sp_reg_idx).p,
                                       sequence<0, (k1_loops - 1) * kK1>{},
@@ -858,11 +901,6 @@ struct BlockFmhaBatchPrefillV3Pipeline
                        get_slice_tile(kv_tile.v_tile,
                                       sequence<0, (k1_loops - 1) * kK1>{},
                                       sequence<kN1, k1_loops * kK1>{}));
-                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
-                {
-                    constexpr index_t si = decltype(sp_reg_idx)::value;
-                    tile_elementwise_inout([&](auto& x) { x *= saved_v_descale[si]; }, o_acc);
-                }
                 fmha_alu0(number<1>{} - sp_reg_idx);
             }
         };
@@ -870,7 +908,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
         constexpr index_t num_unpack_insts =
             (kHasLogitsSoftCap ? 48 : (std::is_same_v<KDataType, fp8_t> ? 36 : 26));
         fp32x2_t pk_o_acc_scale;
-        auto fmha_alu_D_upd_unpack = [&] {
+        auto fmha_alu_D_upd_unpack = [&](auto sp_reg_idx) {
             o_acc_scale = [&] {
                 if constexpr(kHasLogitsSoftCap)
                 {
@@ -881,6 +919,15 @@ struct BlockFmhaBatchPrefillV3Pipeline
                     return ck_tile::exp2(scale_s * (m_old.thread_buf_[0] - m.thread_buf_[0]));
                 }
             }();
+
+            // Fold v_descale ratio into o_acc_scale: transition o_acc from
+            // v_descale_prev-scaled space to saved_v_descale[si]-scaled space.
+            if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+                constexpr index_t si = decltype(sp_reg_idx)::value;
+                o_acc_scale *= v_descale_prev / saved_v_descale[si];
+                v_descale_prev = saved_v_descale[si];
+            }
 
             static_assert(num_unpack_insts % 2 == 0 &&
                           (fmha_alu_D_reg_cnt + num_unpack_insts) <= o_acc.thread_buf_.size());
@@ -904,8 +951,8 @@ struct BlockFmhaBatchPrefillV3Pipeline
             });
         };
 
-        auto fmha_alu_D_upd = [&] {
-            fmha_alu_D_upd_unpack();
+        auto fmha_alu_D_upd = [&](auto sp_reg_idx) {
+            fmha_alu_D_upd_unpack(sp_reg_idx);
             fmha_alu_D_upd_pack();
         };
 
@@ -1045,7 +1092,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                         __builtin_amdgcn_sched_barrier(0);
                     }
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
-                    fmha_alu_D_upd_unpack();
+                    fmha_alu_D_upd_unpack(xdl_SP_p23_reg_idx);
                     Scheduler::schedule(cl_p, number<2>{});
                     __builtin_amdgcn_sched_barrier(0);
                     fmha_alu_D_upd_pack();
@@ -1154,7 +1201,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                         __builtin_amdgcn_sched_barrier(0);
                     }
                     cl_calc(xdl_SP_p23_reg_idx, gemm1);
-                    fmha_alu_D_upd_unpack();
+                    fmha_alu_D_upd_unpack(xdl_SP_p23_reg_idx);
                     Scheduler::schedule(cl_p, number<3>{});
                     __builtin_amdgcn_sched_barrier(0);
                     fmha_alu_D_upd_pack();
@@ -1185,6 +1232,11 @@ struct BlockFmhaBatchPrefillV3Pipeline
 
             auto xdl_SP_p23_reg_idx = ps_pi;
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
+            if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
+            {
+                constexpr index_t si = decltype(ps_pi)::value;
+                v_descale_prev       = saved_v_descale[si];
+            }
         };
 
         if(num_total_loop > 0)
@@ -1225,7 +1277,7 @@ struct BlockFmhaBatchPrefillV3Pipeline
                 fmha_logits_trans(number<0>{});
                 fmha_mask(number<0>{});
                 fmha_alu0(number<0>{});
-                fmha_alu_D_upd();
+                fmha_alu_D_upd(number<0>{});
 
                 kv_token_start += kN0;
                 ++i_total_loops;
@@ -1304,12 +1356,20 @@ struct BlockFmhaBatchPrefillV3Pipeline
         sweep_tile_span(o_spans[number<0>{}], [&](auto idx0) {
             constexpr auto i_idx = make_tuple(idx0);
             const auto tmp       = [&]() {
-                if constexpr(FmhaMask::IsMasking)
+                if constexpr(QScaleEnum == BlockAttentionQuantScaleEnum::KV_BLOCKSCALE)
                 {
-                    return l[i_idx] == 0.f ? 0.f : 1 / l[i_idx];
+                    if constexpr(FmhaMask::IsMasking)
+                        return l[i_idx] == 0.f ? 0.f : v_descale_prev / l[i_idx];
+                    else
+                        return v_descale_prev / l[i_idx];
                 }
                 else
-                    return 1 / l[i_idx];
+                {
+                    if constexpr(FmhaMask::IsMasking)
+                        return l[i_idx] == 0.f ? 0.f : 1 / l[i_idx];
+                    else
+                        return 1 / l[i_idx];
+                }
             }();
             sweep_tile_span(o_spans[number<1>{}], [&](auto idx1) {
                 constexpr auto i_j_idx = make_tuple(idx0, idx1);
