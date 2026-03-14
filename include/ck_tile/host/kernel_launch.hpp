@@ -22,6 +22,8 @@ inline constexpr bool
     kattr_no_packed_fp32_ops_v<T, std::void_t<decltype(T::kattr_no_packed_fp32_ops)>> =
         T::kattr_no_packed_fp32_ops;
 
+// TODO: rename to something more specific (e.g. kernel_attr_no_packed_fp32) since
+// kernel_attr<bool> only controls the no-packed-fp32-ops flag, not a general attribute bag.
 template <bool no_packed_fp32_ops>
 struct kernel_attr
 {
@@ -29,6 +31,32 @@ struct kernel_attr
     // instructions so that they can be co-executed with matrix operations
     static constexpr bool kattr_no_packed_fp32_ops = no_packed_fp32_ops;
 };
+
+// Compose an architecture tag with kernel attributes.
+// Inherits ArchTag for symbol mangling and adds attribute flags.
+// kernel_attr_for<gfx950_t>              -> gfx950_t  (identity)
+// kernel_attr_for<gfx950_t, kernel_attr<true>> -> unique type with attribute
+namespace detail {
+template <typename ArchTag, typename... Attrs>
+struct kernel_attr_for_impl : ArchTag, Attrs...
+{
+};
+
+template <typename ArchTag, typename... Attrs>
+struct kernel_attr_for_helper
+{
+    using type = kernel_attr_for_impl<ArchTag, Attrs...>;
+};
+
+template <typename ArchTag>
+struct kernel_attr_for_helper<ArchTag>
+{
+    using type = ArchTag;
+};
+} // namespace detail
+
+template <typename ArchTag, typename... Attrs>
+using kernel_attr_for = typename detail::kernel_attr_for_helper<ArchTag, Attrs...>::type;
 
 #if CK_TILE_USE_LAUNCH_BOUNDS
 #define KENTRY_LAUNCH_BOUNDS __launch_bounds__(Kernel::kBlockSize, MinBlockPerCu)
@@ -50,15 +78,13 @@ KENTRY_LAUNCH_BOUNDS __global__ void kentry(Args... args)
 }
 template <typename Attr, int MinBlockPerCu, typename Kernel, typename... Args>
 KENTRY_LAUNCH_BOUNDS __global__ //
-    std::enable_if_t<!kattr_no_packed_fp32_ops_v<Attr>>
-    kentry(Args... args)
+    std::enable_if_t<!kattr_no_packed_fp32_ops_v<Attr>> kentry(Args... args)
 {
     KENTRY_BODY;
 }
 template <typename Attr, int MinBlockPerCu, typename Kernel, typename... Args>
 KENTRY_LAUNCH_BOUNDS KENTRY_ATTR_NO_PACKED_FP32_OPS __global__ //
-    std::enable_if_t<kattr_no_packed_fp32_ops_v<Attr>>
-    kentry(Args... args)
+    std::enable_if_t<kattr_no_packed_fp32_ops_v<Attr>> kentry(Args... args)
 {
     KENTRY_BODY;
 }
