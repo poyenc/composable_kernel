@@ -143,7 +143,7 @@ float fmha_batch_prefill_<trait, {F_arch.tag}>(const ck_tile::stream_config& s, 
     auto [kargs, grids] = {F_kargs_creator}<k_>(a);
     const dim3 blocks                      = k_::BlockSize();
     constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
-    return ck_tile::launch_kernel(s, ck_tile::make_kernel<kBlockPerCu, {F_arch.tag}>(k_{{}}, grids, blocks, 0, kargs));
+    return ck_tile::launch_kernel(s, ck_tile::make_kernel<kBlockPerCu, {F_kernel_attr}>(k_{{}}, grids, blocks, 0, kargs));
 }}
 
 #endif // !defined(__HIP_DEVICE_COMPILE__) || ({F_arch.preprocessor_check})
@@ -687,6 +687,9 @@ class FmhaFwdKernel:
             F_kargs_creator=self._get_cpp_kargs_creator_func_name(self.F_pipeline.tag),
             F_pipeline_problem=self._get_cpp_pipeline_problem_name(self.F_pipeline.tag),
             F_page_size=self.F_page_size,
+            F_kernel_attr=f"ck_tile::kernel_attr_for<{self.F_arch.tag}, ck_tile::kernel_attr<true>>"
+            if self.F_pipeline.tag == "qr_async_trload_v3"
+            else f"ck_tile::kernel_attr_for<{self.F_arch.tag}>",
         )
 
     @property
