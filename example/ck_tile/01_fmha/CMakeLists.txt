@@ -7,12 +7,12 @@ if(NOT INST_TARGETS)
 endif()
 
 # validate user-specified fmha_fwd API list
-set(FMHA_FWD_KNOWN_APIS "fwd;fwd_splitkv;fwd_appendkv;pagedkv_prefill")
+set(FMHA_FWD_KNOWN_APIS "fwd")
 set(FMHA_FWD_ENABLE_APIS "fwd" CACHE STRING
   "semicolon-separated list of APIs to generate (${FMHA_FWD_KNOWN_APIS}) & link, or \"all\".")
 if(BUILD_TESTING)
   # Build instances of all APIs for tests
-  set(FMHA_FWD_ENABLE_APIS "all")
+  # set(FMHA_FWD_ENABLE_APIS "all")
 endif()
 if(FMHA_FWD_ENABLE_APIS STREQUAL "all")
   set(FMHA_FWD_ENABLE_APIS ${FMHA_FWD_KNOWN_APIS})
@@ -40,8 +40,8 @@ string(REPLACE ";" "," FMHA_FWD_APIS "${FMHA_FWD_ENABLE_APIS}")
 set(FMHA_FWD_CODE_GEN_COMMON_ARGS
   ${CMAKE_CURRENT_LIST_DIR}/generate.py
   --api ${FMHA_FWD_APIS}
-  --optdim 32,64,128,256
-  # --filter fmha_fwd...
+  --optdim 128
+  --filter fmha_fwd_d128_*16_batch_b128x64x32x128x16x128_r4x1x1_r4x1x1_w32x32x16_w32x32x16_qr_async_trload_vr_npad_nlogits_nbias_*mask_nlse_ndropout_nskip_nsquant_trload
 )
 set(FMHA_BWD_CODE_GEN_COMMON_ARGS
   ${CMAKE_CURRENT_LIST_DIR}/generate.py
