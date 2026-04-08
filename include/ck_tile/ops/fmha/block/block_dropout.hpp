@@ -365,6 +365,9 @@ struct BlockDropout
                 });
             });
             // Transpose randval using LDS
+            __builtin_amdgcn_sched_barrier(0);
+            asm volatile("" :::);
+            __builtin_amdgcn_sched_barrier(0);
             store_tile(randval_lds_window, randval_dist_generated);
             block_sync_lds();
             const auto randval = load_tile(randval_lds_read_window);
@@ -374,10 +377,17 @@ struct BlockDropout
 
         static_for<0, kMPerBlock / kMPerStep, 1>{}([&](auto i_m0) {
             static_for<0, kNPerBlock / kNPerStep, 1>{}([&](auto i_n0) {
+                __builtin_amdgcn_sched_barrier(0);
+                asm volatile("" :::);
+                __builtin_amdgcn_sched_barrier(0);
                 const auto randval = generate_randval(i_m0, i_n0);
                 if(is_store_randval)
                 {
                     const auto randval_store = cast_tile<RandValOutputDataType>(randval);
+#ifdef CK_TILE_FMHA_FWD_REGALLOC_WORKAROUND
+                    if(get_block_id() == 0 && get_warp_id() == 0)
+                        asm volatile("s_nop 0" :::);
+#endif
                     store_tile(randval_dram_window, randval_store);
                 }
                 move_tile_window(randval_dram_window, {0, kNPerStep});
