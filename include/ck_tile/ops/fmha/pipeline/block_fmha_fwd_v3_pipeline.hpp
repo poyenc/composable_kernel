@@ -227,11 +227,10 @@ CK_TILE_DEVICE uint32_t cvt_pk_fp8_f32(float a, float b)
 
 CK_TILE_DEVICE fp32x2_t pk_mul_f32(fp32x2_t lhs, fp32x2_t rhs)
 {
-    fp32x2_t result;
-    asm volatile("v_pk_mul_f32 %[result], %[lhs], %[rhs]"
-                 : [result] "=v"(result)
-                 : [lhs] "v"(lhs), [rhs] "v"(rhs));
-    return result;
+    asm volatile("v_pk_mul_f32 %[result], %[result], %[rhs]"
+                 : [result] "+v"(lhs)
+                 : [rhs] "v"(rhs));
+    return lhs;
 }
 } // namespace detail
 
@@ -619,9 +618,6 @@ struct BlockFmhaFwdV3Pipeline
 
         decltype(m) m_old;
         SMPLComputeDataType o_acc_scale; // rescale o_acc in fmha_alu1() & fmha_alu_D_upd()
-        /// TODO: remove the sp_delta and use sp_compute directly
-        statically_indexed_array<decltype(sp(number<0>{}).sp_compute), 2> sp_delta;
-
         auto fmha_logits_trans = [&](auto sp_reg_idx) {
             if constexpr(kHasLogitsSoftCap)
             {
@@ -666,12 +662,12 @@ struct BlockFmhaFwdV3Pipeline
                     constexpr auto i_j_idx = make_tuple(idx0, idx1);
                     if constexpr(kHasLogitsSoftCap)
                     {
-                        sp_delta(sp_reg_idx)(i_j_idx) =
+                        sp(sp_reg_idx).sp_compute(i_j_idx) =
                             sp(sp_reg_idx).sp_compute(i_j_idx) - m(i_j_idx);
                     }
                     else
                     {
-                        sp_delta(sp_reg_idx)(i_j_idx) = detail::fma_impl_vsv(
+                        sp(sp_reg_idx).sp_compute(i_j_idx) = detail::fma_impl_vsv(
                             sp(sp_reg_idx).sp_compute(i_j_idx), scale_s, -scale_s * m(i_j_idx));
                     }
                 });
@@ -686,7 +682,7 @@ struct BlockFmhaFwdV3Pipeline
                 sweep_tile_span(p_spans[number<1>{}], [&](auto idx1) {
                     constexpr auto i_j_idx = make_tuple(idx0, idx1);
                     sp(sp_reg_idx).sp_compute(i_j_idx) =
-                        ck_tile::exp2(sp_delta(sp_reg_idx)(i_j_idx));
+                        ck_tile::exp2(sp(sp_reg_idx).sp_compute(i_j_idx));
                 });
             });
 
