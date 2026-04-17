@@ -418,7 +418,7 @@ struct FmhaFwdV3Kernel
         return make_tuple(remapped_tg_idx, remapped_tg_idy);
     }
 
-    CK_TILE_DEVICE static constexpr auto GetTileIndex(const Kargs&)
+    CK_TILE_DEVICE static constexpr auto GetTileIndex(const Kargs& kargs)
     {
         using namespace ck_tile;
 
@@ -426,9 +426,17 @@ struct FmhaFwdV3Kernel
         // FmhaPipeline::kN1);
 
         // assume that num_tile_n1 is always 1
+
+        // GQA head interleaving: remap blockIdx.x so consecutive workgroups
+        // access different KV heads for better L2 cache utilization.
+        // Sequential:    blockIdx 0,1 -> KV0; 2,3 -> KV1; 4,5 -> KV2
+        // Interleaved:   blockIdx 0 -> KV0; 1 -> KV1; 2 -> KV2; 3 -> KV0; ...
+        const index_t nhead_kv = gridDim.x / kargs.nhead_ratio_qk;
+        const index_t i_nhead =
+            (blockIdx.x % nhead_kv) * kargs.nhead_ratio_qk + blockIdx.x / nhead_kv;
+
         if constexpr(kIsGroupMode)
         {
-            const index_t i_nhead = blockIdx.x;
             const index_t i_batch = blockIdx.y;
             const index_t i_block = blockIdx.z;
 
@@ -443,7 +451,6 @@ struct FmhaFwdV3Kernel
         }
         else
         {
-            const index_t i_nhead = blockIdx.x;
             const index_t i_block = blockIdx.y;
             const index_t i_batch = blockIdx.z;
 
