@@ -13,11 +13,11 @@ endif()
 set(FMHA_FWD_KNOWN_APIS "fwd")
 set(FMHA_FWD_ENABLE_APIS "fwd" CACHE STRING
   "semicolon-separated list of APIs to generate (${FMHA_FWD_KNOWN_APIS}) & link, or \"all\".")
-if(BUILD_TESTING)
-  # Build instances of all APIs for tests
-  message(DEBUG "Enabling all FWD APIs of CK Tile FMHA for because testing is enabled")
-  set(FMHA_FWD_ENABLE_APIS "all")
-endif()
+# if(BUILD_TESTING)
+#   # Build instances of all APIs for tests
+#   message(DEBUG "Enabling all FWD APIs of CK Tile FMHA for because testing is enabled")
+#   set(FMHA_FWD_ENABLE_APIS "all")
+# endif()
 if(FMHA_FWD_ENABLE_APIS STREQUAL "all")
   set(FMHA_FWD_ENABLE_APIS ${FMHA_FWD_KNOWN_APIS})
 endif()
@@ -63,10 +63,10 @@ set(FMHA_BWD_CODE_GEN_COMMON_ARGS
 # TODO: Consider to use a special receipt for testing only, or even two receipts: a small subset of
 # instances for quick CI runs and a larger subset for scheduled runs (the tests skip tests when
 # there is no corresponding instance for parameters).
-if(BUILD_TESTING)
-  # Filters are in the order of FMHA_FWD_KNOWN_APIS: fwd,fwd_splitkv_combine@fwd_splitkv,fwd_appendkv,pagedkv_prefill
-  list(APPEND FMHA_FWD_CODE_GEN_COMMON_ARGS --filter *_nlogits*_nskip*_nsink*,*@*_nlogits*_nbias*_nsink*,*,*_nlogits*_nskip*_pagedkv*)
-endif()
+# if(BUILD_TESTING)
+#   # Filters are in the order of FMHA_FWD_KNOWN_APIS: fwd,fwd_splitkv_combine@fwd_splitkv,fwd_appendkv,pagedkv_prefill
+#   list(APPEND FMHA_FWD_CODE_GEN_COMMON_ARGS --filter *_nlogits*_nskip*_nsink*,*@*_nlogits*_nbias*_nsink*,*,*_nlogits*_nskip*_pagedkv*)
+# endif()
 
 # generate a list of kernels, but not actually emit files at config sta
 execute_process(
@@ -133,7 +133,7 @@ set(FMHA_BWD_INTERFACE_COMPILE_OPTIONS)
 
 # NOTE: we turn off undefined-func-template to let source compile without explicit declare function specializations
 #       ... because they are auto-generated
-list(APPEND FMHA_FWD_PRIVATE_COMPILE_OPTIONS -Wno-undefined-func-template)
+list(APPEND FMHA_FWD_PRIVATE_COMPILE_OPTIONS -Wno-undefined-func-template -Wno-lifetime-safety-intra-tu-suggestions)
 list(APPEND FMHA_BWD_PRIVATE_COMPILE_OPTIONS -Wno-undefined-func-template)
 
 # Allow comparing floating points directly in order to check sentinel values
@@ -200,6 +200,7 @@ message(DEBUG "adding example ${EXAMPLE_FMHA_FWD}")
 add_executable(${EXAMPLE_FMHA_FWD} EXCLUDE_FROM_ALL example_fmha_fwd.cpp)
 target_link_libraries(${EXAMPLE_FMHA_FWD} ${FMHA_FWD_INSTANCES})
 target_include_directories(${EXAMPLE_FMHA_FWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_compile_options(${EXAMPLE_FMHA_FWD} PRIVATE -Wno-lifetime-safety-intra-tu-suggestions)
 
 message(DEBUG "adding example ${EXAMPLE_FMHA_BWD}")
 # not using add_example_executable() to add this target, since we don't want this to be included in
