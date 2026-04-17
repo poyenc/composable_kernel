@@ -878,20 +878,32 @@ struct BlockFmhaFwdV3Pipeline
                     q_origin.at(number<0>{}), kv_token_start, number<kM0>{}, number<kN0>{});
                 if(need_perpixel_check)
                 {
-                    set_tile_if(
-                        sp(sp_reg_idx).sp_compute,
-                        -numeric<SMPLComputeDataType>::infinity(),
-                        [&](auto tile_idx) {
-                            const auto row = q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
-                            const auto col = kv_token_start + tile_idx.at(number<1>{});
-                            return !variant.LogitsMask(variant_params,
-                                                       block_indices.batch_idx,
-                                                       row,
-                                                       col,
-                                                       block_indices.qo_head_idx,
-                                                       block_indices.kv_head_idx);
-                        },
-                        partition_index);
+                    // Per-warp fast path: each warp handles kMPerWarp contiguous rows.
+                    // Skip set_tile_if for warps fully inside the causal triangle.
+                    constexpr index_t kMPerWarp = kM0 * get_warp_size() / kBlockSize;
+                    bool warp_needs_mask = mask.IsEdgeTile(
+                        q_origin.at(number<0>{}) + warp_id * kMPerWarp,
+                        kv_token_start,
+                        number<kMPerWarp>{},
+                        number<kN0>{});
+                    if(warp_needs_mask)
+                    {
+                        set_tile_if(
+                            sp(sp_reg_idx).sp_compute,
+                            -numeric<SMPLComputeDataType>::infinity(),
+                            [&](auto tile_idx) {
+                                const auto row =
+                                    q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
+                                const auto col = kv_token_start + tile_idx.at(number<1>{});
+                                return !variant.LogitsMask(variant_params,
+                                                           block_indices.batch_idx,
+                                                           row,
+                                                           col,
+                                                           block_indices.qo_head_idx,
+                                                           block_indices.kv_head_idx);
+                            },
+                            partition_index);
+                    }
                 }
             }
         };
