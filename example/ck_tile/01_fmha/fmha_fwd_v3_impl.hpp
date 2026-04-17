@@ -25,6 +25,8 @@
                                                       fmha_fwd_args args)                    \
     {                                                                                        \
         using kernel        = typename ck_tile::get_fmha_fwd_v3_kernel<kernel_traits>::type; \
+        if(config.log_level_ > 0)                                                            \
+            std::cout << ", " #kernel_traits "_trload_v3" << std::flush;                     \
         auto [kargs, grids] = fmha_fwd_v3_create_kargs_and_grids<kernel>(args);              \
         const dim3 blocks   = kernel::BlockSize();                                           \
         constexpr ck_tile::index_t kBlockPerCu = kernel::kBlockPerCu;                        \
