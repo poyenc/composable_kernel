@@ -958,7 +958,6 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
-                __builtin_amdgcn_s_setprio(1);
                 asm volatile("s_nop 1");
                 __builtin_amdgcn_sched_barrier(0);
                 cl_calc(number<0>{}, gemm1);
@@ -966,7 +965,6 @@ struct BlockFmhaFwdV3Pipeline
                 Scheduler::schedule(number<0>{}, number<2>{});
                 __builtin_amdgcn_sched_barrier(0);
                 fmha_alu_D_upd_pack();
-                __builtin_amdgcn_s_setprio(0);
 
                 __builtin_amdgcn_sched_barrier(0);
             }
@@ -1022,7 +1020,6 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
-                __builtin_amdgcn_s_setprio(1);
                 asm volatile("s_nop 1");
                 __builtin_amdgcn_sched_barrier(0);
                 cl_calc(number<1>{}, gemm1);
@@ -1030,7 +1027,6 @@ struct BlockFmhaFwdV3Pipeline
                 Scheduler::schedule(number<0>{}, number<2>{});
                 __builtin_amdgcn_sched_barrier(0);
                 fmha_alu_D_upd_pack();
-                __builtin_amdgcn_s_setprio(0);
 
                 __builtin_amdgcn_sched_barrier(0);
             }
