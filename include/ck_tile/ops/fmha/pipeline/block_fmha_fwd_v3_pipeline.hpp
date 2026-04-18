@@ -227,9 +227,7 @@ CK_TILE_DEVICE uint32_t cvt_pk_fp8_f32(float a, float b)
 
 CK_TILE_DEVICE fp32x2_t pk_mul_f32(fp32x2_t lhs, fp32x2_t rhs)
 {
-    asm volatile("v_pk_mul_f32 %[result], %[result], %[rhs]"
-                 : [result] "+v"(lhs)
-                 : [rhs] "v"(rhs));
+    asm volatile("v_pk_mul_f32 %[result], %[result], %[rhs]" : [result] "+v"(lhs) : [rhs] "v"(rhs));
     return lhs;
 }
 } // namespace detail
@@ -877,11 +875,11 @@ struct BlockFmhaFwdV3Pipeline
                     // Per-warp fast path: each warp handles kMPerWarp contiguous rows.
                     // Skip set_tile_if for warps fully inside the causal triangle.
                     constexpr index_t kMPerWarp = kM0 * get_warp_size() / kBlockSize;
-                    bool warp_needs_mask = mask.IsEdgeTile(
-                        q_origin.at(number<0>{}) + warp_id * kMPerWarp,
-                        kv_token_start,
-                        number<kMPerWarp>{},
-                        number<kN0>{});
+                    bool warp_needs_mask =
+                        mask.IsEdgeTile(q_origin.at(number<0>{}) + warp_id * kMPerWarp,
+                                        kv_token_start,
+                                        number<kMPerWarp>{},
+                                        number<kN0>{});
                     if(warp_needs_mask)
                     {
                         set_tile_if(
@@ -1096,7 +1094,148 @@ struct BlockFmhaFwdV3Pipeline
                 }
                 return result;
             };
-            return iteration(number<0>{}) && iteration(number<1>{});
+            if constexpr(cl_p == 0)
+            {
+                // --- pi=0 inlined (WG0) ---
+                {
+                    bool result = true;
+
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase0
+                    ASM_MARKER("phase0 Wave0-3 (pi=0)");
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
+                    __builtin_amdgcn_sched_barrier(0);
+#if ADD_SBARRIER_FOR_PHASE0
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+#endif
+                    cl_calc(number<1>{}, gemm0);
+                    fmha_alu1(number<0>{});
+                    fmha_logits_trans(number<1>{});
+
+                    Scheduler::schedule(cl_p, number<0>{});
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase1
+                    ASM_MARKER("phase1 Wave0-3");
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    __builtin_amdgcn_sched_barrier(0);
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+                    cl_load(memK, number<1>{}, number<0>{});
+                    Scheduler::schedule(cl_p, number<1>{});
+                    fmha_mask(number<1>{});
+
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase2
+                    ASM_MARKER("phase2 Wave0-3");
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
+                    __builtin_amdgcn_sched_barrier(0);
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+                    asm volatile("s_nop 1");
+                    __builtin_amdgcn_sched_barrier(0);
+                    cl_calc(number<0>{}, gemm1);
+                    fmha_alu_D_upd_unpack();
+                    Scheduler::schedule(cl_p, number<2>{});
+                    __builtin_amdgcn_sched_barrier(0);
+                    fmha_alu_D_upd_pack();
+
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase3
+                    ASM_MARKER("phase3 Wave0-3");
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    __builtin_amdgcn_sched_barrier(0);
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+                    cl_load(memV, number<0>{}, number<0>{});
+
+                    Scheduler::schedule(cl_p, number<3>{});
+                    kv_token_start += kN0;
+                    if(num_total_loop <= ++i_total_loops)
+                    {
+                        result = false;
+                    }
+
+                    if(!result)
+                        return false;
+                }
+                // --- pi=1 inlined (WG0) ---
+                {
+                    bool result = true;
+
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase0
+                    ASM_MARKER("phase0 Wave0-3 (pi=1)");
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
+                    __builtin_amdgcn_sched_barrier(0);
+#if ADD_SBARRIER_FOR_PHASE0
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+#endif
+                    // BF16/FP16 need s_nop to wait for VALU address ops issued
+                    // in the prior load phase before the first MFMA. FP8 uses
+                    // fewer VGPRs so all addresses stay live in registers across
+                    // the entire core loop, eliminating leading VALU address ops
+                    // and thus the need for this wait.
+                    if constexpr(!std::is_same_v<KDataType, fp8_t>)
+                    {
+                        asm volatile("s_nop 1");
+                        __builtin_amdgcn_sched_barrier(0);
+                    }
+                    cl_calc(number<0>{}, gemm0);
+                    fmha_alu1(number<1>{});
+                    fmha_logits_trans(number<0>{});
+
+                    Scheduler::schedule(cl_p, number<0>{});
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase1
+                    ASM_MARKER("phase1 Wave0-3");
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    __builtin_amdgcn_sched_barrier(0);
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+                    cl_load(memK, number<0>{}, number<1>{});
+                    Scheduler::schedule(cl_p, number<1>{});
+                    fmha_mask(number<0>{});
+
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase2
+                    ASM_MARKER("phase2 Wave0-3");
+                    s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
+                    __builtin_amdgcn_sched_barrier(0);
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+                    asm volatile("s_nop 1");
+                    __builtin_amdgcn_sched_barrier(0);
+                    cl_calc(number<1>{}, gemm1);
+                    fmha_alu_D_upd_unpack();
+                    Scheduler::schedule(cl_p, number<2>{});
+                    __builtin_amdgcn_sched_barrier(0);
+                    fmha_alu_D_upd_pack();
+
+                    __builtin_amdgcn_sched_barrier(0);
+                    // phase3
+                    ASM_MARKER("phase3 Wave0-3");
+                    s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
+                    __builtin_amdgcn_sched_barrier(0);
+                    __builtin_amdgcn_s_barrier();
+                    __builtin_amdgcn_sched_barrier(0);
+                    cl_load(memV, number<1>{}, number<1>{});
+
+                    Scheduler::schedule(cl_p, number<3>{});
+                    kv_token_start += kN0;
+                    if(num_total_loop <= ++i_total_loops)
+                    {
+                        result = false;
+                    }
+
+                    return result;
+                }
+            }
+            else
+            {
+                return iteration(number<0>{}) && iteration(number<1>{});
+            }
         };
 
         auto fmha_post_process = [&](auto d) {
