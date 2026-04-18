@@ -442,7 +442,7 @@ struct BlockFmhaFwdV3Pipeline
         statically_indexed_array<sp_compute_type, 2> sp;
 
         decltype(gemm_1.MakeCBlockTile()) o_acc;
-        constexpr float RESCALE_THRESHOLD = 0.0f;
+        constexpr float RESCALE_THRESHOLD = 8.0f;
 
         decltype(block_tile_reduce<SMPLComputeDataType>(
             sp(number<0>{}).sp_compute, sequence<1>{}, f_max, SMPLComputeDataType{0})) m;
@@ -648,6 +648,19 @@ struct BlockFmhaFwdV3Pipeline
 #endif
             m = m_latest;
 
+            // threshold check before subtraction (opus_attn style)
+            // ensures P = exp2(sp_compute - m) is consistent with chosen m
+            {
+                float max_diff = m.thread_buf_[0] - m_old.thread_buf_[0];
+                bool below     = (max_diff <= RESCALE_THRESHOLD);
+                bool all_below = (__builtin_amdgcn_ballot_w64(below) ==
+                                  __builtin_amdgcn_read_exec());
+                if(__builtin_expect(all_below, 1))
+                {
+                    m.thread_buf_[0] = m_old.thread_buf_[0];
+                }
+            }
+
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
@@ -795,34 +808,29 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto fmha_rescale_o = [&] {
-            float max_diff = m.thread_buf_[0] - m_old.thread_buf_[0];
-            bool below     = (max_diff <= RESCALE_THRESHOLD);
-            bool all_below = (__builtin_amdgcn_ballot_w64(below) ==
-                              __builtin_amdgcn_read_exec());
-
-            if(__builtin_expect(all_below, 1))
+            // fmha_alu0 already applied threshold+ballot to choose m.
+            // If m was reverted to m_old, no rescale needed.
+            if(m.thread_buf_[0] == m_old.thread_buf_[0])
             {
-                m.thread_buf_[0] = m_old.thread_buf_[0];
+                return;
             }
-            else
-            {
-                o_acc_scale = [&] {
-                    if constexpr(kHasLogitsSoftCap)
-                    {
-                        return ck_tile::exp2(m_old.thread_buf_[0] - m.thread_buf_[0]);
-                    }
-                    else
-                    {
-                        return ck_tile::exp2(scale_s *
-                                             (m_old.thread_buf_[0] - m.thread_buf_[0]));
-                    }
-                }();
 
-                l.thread_buf_[0] *= o_acc_scale;
+            o_acc_scale = [&] {
+                if constexpr(kHasLogitsSoftCap)
+                {
+                    return ck_tile::exp2(m_old.thread_buf_[0] - m.thread_buf_[0]);
+                }
+                else
+                {
+                    return ck_tile::exp2(scale_s *
+                                         (m_old.thread_buf_[0] - m.thread_buf_[0]));
+                }
+            }();
 
-                static_for<0, o_acc.thread_buf_.size(), 1>{}(
-                    [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
-            }
+            l.thread_buf_[0] *= o_acc_scale;
+
+            static_for<0, o_acc.thread_buf_.size(), 1>{}(
+                [&](auto idx) { o_acc.thread_buf_[idx] *= o_acc_scale; });
         };
 
         auto fmha_mask = [&](auto sp_reg_idx) {
