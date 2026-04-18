@@ -627,7 +627,8 @@ struct BlockFmhaFwdV3Pipeline
             }
         };
 
-        auto fmha_alu0 = [&](auto sp_reg_idx) {
+        // Phase 1: row_max + threshold check (~15 VALU, fits in step_k(0) shadow)
+        auto fmha_alu0_max = [&](auto sp_reg_idx) {
             m_old = m; // m{j-1}
             static_assert(m.thread_buf_.size() == 1,
                           "assuming that each thread holds 1 rowmax value");
@@ -650,9 +651,21 @@ struct BlockFmhaFwdV3Pipeline
 
             // threshold check before subtraction (opus_attn style)
             // ensures P = exp2(sp_compute - m) is consistent with chosen m
+            // Use scaled domain for non-softcap: scale_s * max_diff <= threshold
+            // (opus_attn pre-scales Q so its m is already in scaled domain)
             {
                 float max_diff = m.thread_buf_[0] - m_old.thread_buf_[0];
-                bool below     = (max_diff <= RESCALE_THRESHOLD);
+                bool below;
+                if constexpr(kHasLogitsSoftCap)
+                {
+                    // softcap bounds S range; m is raw; rescale uses raw m
+                    below = (max_diff <= RESCALE_THRESHOLD);
+                }
+                else
+                {
+                    // no softcap: rescale uses scale_s * m; check in scaled domain
+                    below = (scale_s * max_diff <= RESCALE_THRESHOLD);
+                }
                 bool all_below = (__builtin_amdgcn_ballot_w64(below) ==
                                   __builtin_amdgcn_read_exec());
                 if(__builtin_expect(all_below, 1))
@@ -660,7 +673,10 @@ struct BlockFmhaFwdV3Pipeline
                     m.thread_buf_[0] = m_old.thread_buf_[0];
                 }
             }
+        };
 
+        // Phase 2: subtraction (~32 FMA, fits in step_k(1-3) shadow)
+        auto fmha_alu0_sub = [&](auto sp_reg_idx) {
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
@@ -678,10 +694,10 @@ struct BlockFmhaFwdV3Pipeline
                     }
                 });
             });
-            /// TODO: move some fmha_alu1() code here if necessary
         };
 
-        auto fmha_alu1 = [&](auto sp_reg_idx) {
+        // exp2(sp_compute) — can run in step_k(1-3) shadow
+        auto fmha_alu1_exp2 = [&](auto sp_reg_idx) {
             constexpr auto p_spans =
                 std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>::get_distributed_spans();
             sweep_tile_span(p_spans[number<0>{}], [&](auto idx0) {
@@ -691,7 +707,10 @@ struct BlockFmhaFwdV3Pipeline
                         ck_tile::exp2(sp(sp_reg_idx).sp_compute(i_j_idx));
                 });
             });
+        };
 
+        // rowsum + l update + P conversion — runs in GEMM0 shadow (cluster 0/4)
+        auto fmha_alu1_rest = [&](auto sp_reg_idx) {
             auto rowsum_p = block_tile_reduce<SMPLComputeDataType>(
                 sp(sp_reg_idx).sp_compute,
                 sequence<1>{},
@@ -713,20 +732,13 @@ struct BlockFmhaFwdV3Pipeline
 #endif
 
             // l{j}
-            /// Note: The compiler keeps moving the following instructions elsewhere because 'l'
-            /// is first consumed later. To anchor them here, we rewrite the final addition in
-            /// inline assembly to create a dependency, forcing the dependent instructions to
-            /// be emitted at this point.
             constexpr auto o_spans = decltype(o_acc)::get_distributed_spans();
             sweep_tile_span(o_spans[number<0>{}], [&](auto idx0) {
                 constexpr auto i_idx = make_tuple(idx0);
                 l(i_idx) = detail::add_impl_vv(l[i_idx], rowsum_p[i_idx]);
             });
 
-            /// Note: The compiler keeps sinking the conversion instructions because the
-            /// result 'p' is only consumed later. To anchor them here, we rewrite
-            /// the cast_tile() call as inline assembly, forcing the conversions to be
-            /// emitted at this point.
+            // P type conversion
             static_assert(sp(sp_reg_idx).p.thread_buf_.size() % 2 == 0);
             static_for<0, sp(sp_reg_idx).p.thread_buf_.size(), 2>{}([&](auto idx) {
                 float x = p_compute_element_func(sp(sp_reg_idx).sp_compute.thread_buf_[idx]);
@@ -752,10 +764,6 @@ struct BlockFmhaFwdV3Pipeline
                         bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
                 }
             });
-
-            /// Note: Place fmha_alu1() at the end of the phase. The surrounding inline assembly
-            /// can interfere with the behavior of sched_group_barrier(), so ending the phase here
-            /// avoids unintended reordering.
         };
 
         auto gemm = [&](auto sp_reg_idx, auto gemm_idx) {
@@ -782,29 +790,15 @@ struct BlockFmhaFwdV3Pipeline
             }
         };
 
-        auto cl_calc = [&](auto sp_reg_idx, auto gemm_idx) {
-            if constexpr(gemm_idx == 0)
-            {
-                clear_tile(sp(sp_reg_idx).sp_compute); // initialize C
-                gemm_0(sp(sp_reg_idx).sp_compute,
-                       get_slice_tile(q_tile,
-                                      sequence<0, (k0_loops - 1) * kK0>{},
-                                      sequence<kM0, k0_loops * kK0>{}),
-                       get_slice_tile(kv_tile.k_tile,
-                                      sequence<0, (k0_loops - 1) * kK0>{},
-                                      sequence<kN0, k0_loops * kK0>{}));
-            }
-            else
-            {
-                gemm_1(o_acc,
-                       get_slice_tile(sp(sp_reg_idx).p,
-                                      sequence<0, (k1_loops - 1) * kK1>{},
-                                      sequence<kM0, k1_loops * kK1>{}),
-                       get_slice_tile(kv_tile.v_tile,
-                                      sequence<0, (k1_loops - 1) * kK1>{},
-                                      sequence<kN1, k1_loops * kK1>{}));
-                fmha_alu0(number<1>{} - sp_reg_idx);
-            }
+        auto cl_calc_gemm0 = [&](auto sp_reg_idx) {
+            clear_tile(sp(sp_reg_idx).sp_compute); // initialize C
+            gemm_0(sp(sp_reg_idx).sp_compute,
+                   get_slice_tile(q_tile,
+                                  sequence<0, (k0_loops - 1) * kK0>{},
+                                  sequence<kM0, k0_loops * kK0>{}),
+                   get_slice_tile(kv_tile.k_tile,
+                                  sequence<0, (k0_loops - 1) * kK0>{},
+                                  sequence<kN0, k0_loops * kK0>{}));
         };
 
         auto fmha_rescale_o = [&] {
@@ -884,15 +878,12 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto core_loop = [&]() {
-            auto gemm0 = number<0>{};
-            auto gemm1 = number<1>{};
-
             auto memV = number<0>{};
             auto memK = number<1>{};
 
             using Scheduler = CoreLoopScheduler<Problem>;
 
-            // --- Cluster 0: GEMM0(sp[1]) + fmha_alu1(sp[0]) + logits_trans(sp[1]) ---
+            // --- Cluster 0: GEMM0(sp[1]) + fmha_alu1_rest(sp[0]) + logits_trans(sp[1]) ---
             {
                 __builtin_amdgcn_sched_barrier(0);
                 ASM_MARKER("cluster0 (pi=0)");
@@ -900,8 +891,8 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
-                cl_calc(number<1>{}, gemm0);
-                fmha_alu1(number<0>{});
+                cl_calc_gemm0(number<1>{});
+                fmha_alu1_rest(number<0>{});
                 fmha_logits_trans(number<1>{});
 
                 Scheduler::schedule(number<0>{}, number<0>{});
@@ -920,18 +911,55 @@ struct BlockFmhaFwdV3Pipeline
 
                 __builtin_amdgcn_sched_barrier(0);
             }
-            // --- Cluster 2: GEMM1(sp[0]) + fmha_rescale_o ---
+            // --- Cluster 2: step_k(0) + alu0_max + rescale | step_k(1-3) + sub + exp2 ---
             {
                 ASM_MARKER("cluster2 (pi=0)");
                 s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
-                asm volatile("s_nop 1");
-                __builtin_amdgcn_sched_barrier(0);
-                cl_calc(number<0>{}, gemm1);
+
+                auto p_tile = get_slice_tile(sp(number<0>{}).p,
+                                             sequence<0, (k1_loops - 1) * kK1>{},
+                                             sequence<kM0, k1_loops * kK1>{});
+                auto v_tile = get_slice_tile(kv_tile.v_tile,
+                                             sequence<0, (k1_loops - 1) * kK1>{},
+                                             sequence<kN1, k1_loops * kK1>{});
+
+                // step_k(0): 4 MFMAs
+                gemm_1.template step_k<0>(o_acc, p_tile, v_tile);
+
+                // row_max + threshold (in step_k(0) MFMA shadow)
+                fmha_alu0_max(number<1>{});
+
+                // scheduling for step_k(0): 4 pairs of {1 MFMA, 5 VALU}
+                static_for<0, 4, 1>{}([&](auto) {
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+                });
+
+                // rescale o_acc (branch splits BB — opus_attn style)
                 fmha_rescale_o();
-                Scheduler::schedule(number<0>{}, number<2>{});
+
+                // step_k(1-3): 12 MFMAs — in same BB as sub+exp2 after branch
+                gemm_1.template step_k<1>(o_acc, p_tile, v_tile);
+                gemm_1.template step_k<2>(o_acc, p_tile, v_tile);
+                gemm_1.template step_k<3>(o_acc, p_tile, v_tile);
+
+                // subtraction + exp2 (in step_k(1-3) MFMA shadow)
+                fmha_alu0_sub(number<1>{});
+                fmha_alu1_exp2(number<1>{});
+
+                // scheduling for step_k(1-3): 6 pairs of {1 MFMA, 5 VALU}
+                // + 6 pairs of {1 MFMA, 3 TRANS} for exp2
+                static_for<0, 6, 1>{}([&](auto) {
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+                });
+                static_for<0, 6, 1>{}([&](auto) {
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 3, 0);
+                });
 
                 __builtin_amdgcn_sched_barrier(0);
             }
@@ -952,7 +980,7 @@ struct BlockFmhaFwdV3Pipeline
                 }
             }
 
-            // --- Cluster 4: GEMM0(sp[0]) + fmha_alu1(sp[1]) + logits_trans(sp[0]) ---
+            // --- Cluster 4: GEMM0(sp[0]) + fmha_alu1_rest(sp[1]) + logits_trans(sp[0]) ---
             {
                 __builtin_amdgcn_sched_barrier(0);
                 ASM_MARKER("cluster4 (pi=1)");
@@ -960,8 +988,8 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
-                cl_calc(number<0>{}, gemm0);
-                fmha_alu1(number<1>{});
+                cl_calc_gemm0(number<0>{});
+                fmha_alu1_rest(number<1>{});
                 fmha_logits_trans(number<0>{});
 
                 Scheduler::schedule(number<0>{}, number<0>{});
@@ -980,18 +1008,55 @@ struct BlockFmhaFwdV3Pipeline
 
                 __builtin_amdgcn_sched_barrier(0);
             }
-            // --- Cluster 6: GEMM1(sp[1]) + fmha_rescale_o ---
+            // --- Cluster 6: step_k(0) + alu0_max + rescale | step_k(1-3) + sub + exp2 ---
             {
                 ASM_MARKER("cluster6 (pi=1)");
                 s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
-                asm volatile("s_nop 1");
-                __builtin_amdgcn_sched_barrier(0);
-                cl_calc(number<1>{}, gemm1);
+
+                auto p_tile = get_slice_tile(sp(number<1>{}).p,
+                                             sequence<0, (k1_loops - 1) * kK1>{},
+                                             sequence<kM0, k1_loops * kK1>{});
+                auto v_tile = get_slice_tile(kv_tile.v_tile,
+                                             sequence<0, (k1_loops - 1) * kK1>{},
+                                             sequence<kN1, k1_loops * kK1>{});
+
+                // step_k(0): 4 MFMAs
+                gemm_1.template step_k<0>(o_acc, p_tile, v_tile);
+
+                // row_max + threshold (in step_k(0) MFMA shadow)
+                fmha_alu0_max(number<0>{});
+
+                // scheduling for step_k(0): 4 pairs of {1 MFMA, 5 VALU}
+                static_for<0, 4, 1>{}([&](auto) {
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+                });
+
+                // rescale o_acc (branch splits BB — opus_attn style)
                 fmha_rescale_o();
-                Scheduler::schedule(number<0>{}, number<2>{});
+
+                // step_k(1-3): 12 MFMAs — in same BB as sub+exp2 after branch
+                gemm_1.template step_k<1>(o_acc, p_tile, v_tile);
+                gemm_1.template step_k<2>(o_acc, p_tile, v_tile);
+                gemm_1.template step_k<3>(o_acc, p_tile, v_tile);
+
+                // subtraction + exp2 (in step_k(1-3) MFMA shadow)
+                fmha_alu0_sub(number<0>{});
+                fmha_alu1_exp2(number<0>{});
+
+                // scheduling for step_k(1-3): 6 pairs of {1 MFMA, 5 VALU}
+                // + 6 pairs of {1 MFMA, 3 TRANS} for exp2
+                static_for<0, 6, 1>{}([&](auto) {
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+                });
+                static_for<0, 6, 1>{}([&](auto) {
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                    __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 3, 0);
+                });
 
                 __builtin_amdgcn_sched_barrier(0);
             }
@@ -1030,7 +1095,7 @@ struct BlockFmhaFwdV3Pipeline
             __builtin_amdgcn_s_barrier();
 
             V_lds_load(V_lds_rd_idx);
-            fmha_alu1(ps_pi);
+            fmha_alu1_rest(ps_pi);
 
             s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
 
@@ -1065,9 +1130,10 @@ struct BlockFmhaFwdV3Pipeline
                 gemm(number<0>{}, /*gemm_idx=*/number<0>{});
                 fmha_logits_trans(number<0>{});
                 fmha_mask(number<0>{});
-                /// TODO: find better way to map fmha_alu(0,96) call
-                fmha_alu0(number<0>{});
+                fmha_alu0_max(number<0>{});
                 fmha_rescale_o();
+                fmha_alu0_sub(number<0>{});
+                fmha_alu1_exp2(number<0>{});
 
                 kv_token_start += kN0;
                 ++i_total_loops;
