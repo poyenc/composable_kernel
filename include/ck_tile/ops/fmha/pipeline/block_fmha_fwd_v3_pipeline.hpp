@@ -72,8 +72,9 @@ struct CoreLoopSchedulerDefaultBase
 
     CK_TILE_DEVICE static constexpr void schedule_load_phase()
     {
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 1, 0);
+        // ds_read (old LDS buffer) FIRST to avoid vmcnt(2) fence
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::DS_READ, 32, 0);
+        // buffer_load to LDS (new buffer) SECOND
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VMEM_READ, 1, 0);
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 1, 0);
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VMEM_READ, 1, 0);
@@ -867,13 +868,13 @@ struct BlockFmhaFwdV3Pipeline
         auto cl_load = [&](auto load_type, auto mem_wr_idx, auto lds_rd_idx) {
             if constexpr(load_type == 0)
             {
-                V_mem_load(mem_wr_idx);
-                K_lds_load(lds_rd_idx);
+                K_lds_load(lds_rd_idx);   // ds_read (old buffer) FIRST
+                V_mem_load(mem_wr_idx);   // buffer_load to LDS (new buffer) SECOND
             }
             else
             {
-                K_mem_load(mem_wr_idx);
-                V_lds_load(lds_rd_idx);
+                V_lds_load(lds_rd_idx);   // ds_read (old buffer) FIRST
+                K_mem_load(mem_wr_idx);   // buffer_load to LDS (new buffer) SECOND
             }
         };
 
