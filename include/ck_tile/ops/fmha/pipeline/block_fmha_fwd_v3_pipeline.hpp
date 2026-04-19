@@ -47,26 +47,19 @@ struct CoreLoopSchedulerDefaultBase
 
     CK_TILE_DEVICE static constexpr void schedule_gemm0_compute()
     {
-        // First MFMA: front-load 4 TRANS to fill pipeline
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 4, 0);
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
-        // Middle MFMAs: steady-state 2 TRANS each
-        static_for<0, Params::kMfmaPerWarpGemm0 - 2, 1>{}([&](auto) {
+        // GEMM0: 16 MFMA, ~34 VALU, 0 TRANS (exp2 moved to GEMM1 clusters)
+        static_for<0, Params::kMfmaPerWarpGemm0, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 2, 0);
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
         });
-        // Last MFMA: no remaining TRANS
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 2, 0);
     }
 
     CK_TILE_DEVICE static constexpr void schedule_gemm1_compute()
     {
+        // GEMM1: 16 MFMA, ~109 VALU, ~33 TRANS (exp2 now in GEMM1 cluster)
         static_for<0, Params::kMfmaPerWarpGemm1, 1>{}([&](auto) {
             __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
-            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+            __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 7, 0);
         });
     }
 
