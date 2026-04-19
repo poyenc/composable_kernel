@@ -195,24 +195,19 @@ CK_TILE_DEVICE float mul_impl_vv(float lhs, float rhs)
 
 CK_TILE_DEVICE fp16x2_t cvt_pk_fp16_f32(float a, float b)
 {
-    fp16x2_t result;
-    asm volatile("v_cvt_pk_f16_f32 %[result], %[a], %[b]"
-                 : [result] "=v"(result)
-                 : [a] "v"(a), [b] "v"(b));
-    return result;
+    return fp16x2_t{static_cast<fp16_t>(a), static_cast<fp16_t>(b)};
 }
 
 CK_TILE_DEVICE bf16x2_t cvt_pk_bf16_f32(float a, float b)
 {
-    bf16x2_t result;
-    asm volatile("v_cvt_pk_bf16_f32 %[result], %[a], %[b]"
-                 : [result] "=v"(result)
-                 : [a] "v"(a), [b] "v"(b));
-    return result;
+    // Let the compiler choose the best packing instruction.
+    // On gfx950, this emits v_cvt_pk_bf16_f32 via __builtin_amdgcn_cvt_pk_bf16.
+    return bf16x2_t{static_cast<bf16_t>(a), static_cast<bf16_t>(b)};
 }
 
 CK_TILE_DEVICE uint32_t cvt_pk_fp8_f32(float a, float b)
 {
+    // Keep asm for fp8 — no C++ builtin for v_cvt_pk_fp8_f32
     uint32_t result;
     asm volatile("v_cvt_pk_fp8_f32 %[result], %[a], %[b]"
                  : [result] "=v"(result)
