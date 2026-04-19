@@ -918,6 +918,7 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
+                asm volatile("s_setprio 1" ::: "memory");
 
                 auto p_tile = get_slice_tile(sp(number<0>{}).p,
                                              sequence<0, (k1_loops - 1) * kK1>{},
@@ -961,6 +962,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 3, 0);
                 });
 
+                asm volatile("s_setprio 0" ::: "memory");
                 __builtin_amdgcn_sched_barrier(0);
             }
             // --- Cluster 3: V_mem_load(0) + K_lds_load(0) + loop check ---
@@ -1015,6 +1017,7 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
+                asm volatile("s_setprio 1" ::: "memory");
 
                 auto p_tile = get_slice_tile(sp(number<1>{}).p,
                                              sequence<0, (k1_loops - 1) * kK1>{},
@@ -1058,6 +1061,7 @@ struct BlockFmhaFwdV3Pipeline
                     __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::TRANS, 3, 0);
                 });
 
+                asm volatile("s_setprio 0" ::: "memory");
                 __builtin_amdgcn_sched_barrier(0);
             }
             // --- Cluster 7: V_mem_load(1) + K_lds_load(1) + loop check ---
