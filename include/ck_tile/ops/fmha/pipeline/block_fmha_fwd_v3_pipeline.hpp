@@ -181,11 +181,7 @@ CK_TILE_DEVICE float fma_impl_vsv(float a, float b, float c) { return a * b + c;
 
 CK_TILE_DEVICE float add_impl_vv(float lhs, float rhs)
 {
-    float result;
-    asm volatile("v_add_f32_e32 %[result], %[lhs], %[rhs]"
-                 : [result] "=v"(result)
-                 : [lhs] "v"(lhs), [rhs] "v"(rhs));
-    return result;
+    return lhs + rhs;
 }
 
 CK_TILE_DEVICE float mul_impl_vv(float lhs, float rhs)
@@ -765,6 +761,9 @@ struct BlockFmhaFwdV3Pipeline
                         bit_cast<fp8_t>(static_cast<uint8_t>((packed >> 8) & 0xFF));
                 }
             });
+            // Anchor P tile — prevent compiler from sinking conversion past cluster boundary
+            // (matches opus_attn's asm volatile("" : "+v"(v_p) ::) at cluster end)
+            asm volatile("" ::: "memory");
         };
 
         auto gemm = [&](auto sp_reg_idx, auto gemm_idx) {
