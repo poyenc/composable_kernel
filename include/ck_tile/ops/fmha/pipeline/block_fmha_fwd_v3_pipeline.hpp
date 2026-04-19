@@ -184,14 +184,7 @@ CK_TILE_DEVICE float add_impl_vv(float lhs, float rhs)
     return lhs + rhs;
 }
 
-CK_TILE_DEVICE float mul_impl_vv(float lhs, float rhs)
-{
-    float result;
-    asm volatile("v_mul_f32_e32 %[result], %[lhs], %[rhs]"
-                 : [result] "=v"(result)
-                 : [lhs] "v"(lhs), [rhs] "v"(rhs));
-    return result;
-}
+CK_TILE_DEVICE float mul_impl_vv(float lhs, float rhs) { return lhs * rhs; }
 
 CK_TILE_DEVICE fp16x2_t cvt_pk_fp16_f32(float a, float b)
 {
