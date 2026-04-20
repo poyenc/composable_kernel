@@ -358,6 +358,63 @@ struct BlockGemmARegBRegCRegV2
         }
     }
 
+    // C += A * B for a single k-step (kIter = KStep)
+    // Allows interleaving VALU work between k-steps of the GEMM.
+    template <index_t KStep, typename CBlockTensor, typename ABlockTensor, typename BBlockTensor>
+    CK_TILE_DEVICE void step_k(CBlockTensor& c_block_tensor,
+                               const ABlockTensor& a_block_tensor,
+                               const BBlockTensor& b_block_tensor) const
+    {
+        static_assert(KStep < KIterPerWarp, "KStep out of range");
+
+        using AWarpDstr = typename WarpGemm::AWarpDstr;
+        using BWarpDstr = typename WarpGemm::BWarpDstr;
+        using CWarpDstr = typename WarpGemm::CWarpDstr;
+
+        using AWarpTensor = typename WarpGemm::AWarpTensor;
+        using BWarpTensor = typename WarpGemm::BWarpTensor;
+        using CWarpTensor = typename WarpGemm::CWarpTensor;
+
+        constexpr auto a_warp_y_lengths =
+            to_sequence(AWarpDstr{}.get_ys_to_d_descriptor().get_lengths());
+        constexpr auto b_warp_y_lengths =
+            to_sequence(BWarpDstr{}.get_ys_to_d_descriptor().get_lengths());
+        constexpr auto c_warp_y_lengths =
+            to_sequence(CWarpDstr{}.get_ys_to_d_descriptor().get_lengths());
+
+        constexpr auto a_warp_y_index_zeros = uniform_sequence_gen_t<AWarpDstr::NDimY, 0>{};
+        constexpr auto b_warp_y_index_zeros = uniform_sequence_gen_t<BWarpDstr::NDimY, 0>{};
+        constexpr auto c_warp_y_index_zeros = uniform_sequence_gen_t<CWarpDstr::NDimY, 0>{};
+
+        constexpr auto kIter = number<KStep>{};
+
+        static_for<0, MIterPerWarp, 1>{}([&](auto mIter) {
+            static_for<0, NIterPerWarp, 1>{}([&](auto nIter) {
+                AWarpTensor a_warp_tensor;
+                a_warp_tensor.get_thread_buffer() = a_block_tensor.get_y_sliced_thread_data(
+                    merge_sequences(sequence<mIter, kIter>{}, a_warp_y_index_zeros),
+                    merge_sequences(sequence<1, 1>{}, a_warp_y_lengths));
+
+                BWarpTensor b_warp_tensor;
+                b_warp_tensor.get_thread_buffer() = b_block_tensor.get_y_sliced_thread_data(
+                    merge_sequences(sequence<nIter, kIter>{}, b_warp_y_index_zeros),
+                    merge_sequences(sequence<1, 1>{}, b_warp_y_lengths));
+
+                CWarpTensor c_warp_tensor;
+                c_warp_tensor.get_thread_buffer() = c_block_tensor.get_y_sliced_thread_data(
+                    merge_sequences(sequence<mIter, nIter>{}, c_warp_y_index_zeros),
+                    merge_sequences(sequence<1, 1>{}, c_warp_y_lengths));
+
+                WarpGemm{}(c_warp_tensor, a_warp_tensor, b_warp_tensor);
+
+                c_block_tensor.set_y_sliced_thread_data(
+                    merge_sequences(sequence<mIter, nIter>{}, c_warp_y_index_zeros),
+                    merge_sequences(sequence<1, 1>{}, c_warp_y_lengths),
+                    c_warp_tensor.get_thread_buffer());
+            });
+        });
+    }
+
     // C = A * B
     template <typename ABlockTensor, typename BBlockTensor>
     CK_TILE_DEVICE auto operator()(const ABlockTensor& a_block_tensor,
