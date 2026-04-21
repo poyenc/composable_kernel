@@ -589,6 +589,7 @@ struct BlockFmhaFwdV3Pipeline
 
         decltype(m) m_old;
         SMPLComputeDataType o_acc_scale; // rescale o_acc in fmha_rescale_o()
+        bool need_rescale; // scalar-uniform flag from ballot in fmha_alu0_max
         auto fmha_logits_trans = [&](auto sp_reg_idx) {
             if constexpr(kHasLogitsSoftCap)
             {
@@ -649,6 +650,11 @@ struct BlockFmhaFwdV3Pipeline
                 if(__builtin_expect(all_below, 1))
                 {
                     m.thread_buf_[0] = m_old.thread_buf_[0];
+                    need_rescale = false;
+                }
+                else
+                {
+                    need_rescale = true;
                 }
             }
         };
@@ -783,9 +789,11 @@ struct BlockFmhaFwdV3Pipeline
         };
 
         auto fmha_rescale_o = [&] {
-            // fmha_alu0 already applied threshold+ballot to choose m.
-            // If m was reverted to m_old, no rescale needed.
-            if(m.thread_buf_[0] == m_old.thread_buf_[0])
+            // fmha_alu0_max sets need_rescale via scalar-uniform ballot.
+            // Using the bool flag instead of per-lane float compare (m == m_old)
+            // so the compiler emits s_cbranch (scalar) instead of s_and_saveexec
+            // (exec masking), keeping the hot path in one basic block.
+            if(__builtin_expect(!need_rescale, 1))
             {
                 return;
             }
