@@ -517,6 +517,27 @@ struct BlockFmhaFwdV3Pipeline
             auto transformed_q = tile_elementwise_in(q_element_func, origin_q);
 
             q_tile = transformed_q;
+            // Pre-scale Q by scale_s so GEMM0 output is already in log2 domain.
+            // Eliminates per-iteration FMA → SUB conversion in fmha_alu0_sub.
+            if constexpr(!kHasLogitsSoftCap)
+            {
+                static_for<0, q_tile.thread_buf_.size(), 2>{}([&](auto idx) {
+                    float x = type_convert<float>(q_tile.thread_buf_[idx]) * scale_s;
+                    float y = type_convert<float>(q_tile.thread_buf_[idx + 1]) * scale_s;
+                    if constexpr(std::is_same_v<QDataType, bf16_t>)
+                    {
+                        auto packed               = detail::cvt_pk_bf16_f32(x, y);
+                        q_tile.thread_buf_[idx]     = packed.x;
+                        q_tile.thread_buf_[idx + 1] = packed.y;
+                    }
+                    else if constexpr(std::is_same_v<QDataType, fp16_t>)
+                    {
+                        auto packed               = detail::cvt_pk_fp16_f32(x, y);
+                        q_tile.thread_buf_[idx]     = packed.x;
+                        q_tile.thread_buf_[idx + 1] = packed.y;
+                    }
+                });
+            }
         }
 
         clear_tile(o_acc);
@@ -642,8 +663,8 @@ struct BlockFmhaFwdV3Pipeline
                 }
                 else
                 {
-                    // no softcap: rescale uses scale_s * m; check in scaled domain
-                    below = (scale_s * max_diff <= RESCALE_THRESHOLD);
+                    // Q pre-scaled: m is already in scaled domain
+                    below = (max_diff <= RESCALE_THRESHOLD);
                 }
                 bool all_below = (__builtin_amdgcn_ballot_w64(below) ==
                                   __builtin_amdgcn_read_exec());
@@ -673,8 +694,8 @@ struct BlockFmhaFwdV3Pipeline
                     }
                     else
                     {
-                        sp(sp_reg_idx).sp_compute(i_j_idx) = detail::fma_impl_vsv(
-                            sp(sp_reg_idx).sp_compute(i_j_idx), scale_s, -scale_s * m(i_j_idx));
+                        sp(sp_reg_idx).sp_compute(i_j_idx) =
+                            sp(sp_reg_idx).sp_compute(i_j_idx) - m(i_j_idx);
                     }
                 });
             });
@@ -805,8 +826,8 @@ struct BlockFmhaFwdV3Pipeline
                 }
                 else
                 {
-                    return ck_tile::exp2(scale_s *
-                                         (m_old.thread_buf_[0] - m.thread_buf_[0]));
+                    // Q pre-scaled: m values are already in scaled domain
+                    return ck_tile::exp2(m_old.thread_buf_[0] - m.thread_buf_[0]);
                 }
             }();
 
@@ -833,21 +854,76 @@ struct BlockFmhaFwdV3Pipeline
                                         number<kN0>{});
                     if(warp_needs_mask)
                     {
-                        set_tile_if(
-                            sp(sp_reg_idx).sp_compute,
-                            -numeric<SMPLComputeDataType>::infinity(),
-                            [&](auto tile_idx) {
-                                const auto row =
-                                    q_origin.at(number<0>{}) + tile_idx.at(number<0>{});
-                                const auto col = kv_token_start + tile_idx.at(number<1>{});
-                                return !variant.LogitsMask(variant_params,
-                                                           block_indices.batch_idx,
-                                                           row,
-                                                           col,
-                                                           block_indices.qo_head_idx,
-                                                           block_indices.kv_head_idx);
-                            },
-                            partition_index);
+                        // Direct OOB masking using compile-time MFMA layout offsets.
+                        // Replaces set_tile_if which reconstructs coordinates per-element.
+                        using BlockGemm0 = remove_cvref_t<decltype(gemm_0)>;
+                        using WG0 = typename BlockGemm0::WarpGemm;
+                        using WGImpl0 = typename WG0::WarpGemmAttribute::Impl;
+                        constexpr index_t kCMLane_c = WGImpl0::kCMLane;
+                        constexpr index_t kCM0PerLane_c = WGImpl0::kCM0PerLane;
+                        constexpr index_t kCM1PerLane_c = WGImpl0::kCM1PerLane;
+                        constexpr index_t kNIterPerWarp = BlockGemm0::NIterPerWarp;
+                        constexpr index_t kNPerMfma = kCM0PerLane_c * kCMLane_c * kCM1PerLane_c;
+
+                        using SpComputeType = std::decay_t<decltype(sp(sp_reg_idx).sp_compute)>;
+                        constexpr auto sp_dstr = SpComputeType::get_tile_distribution();
+                        const auto base_x = sp_dstr.calculate_index(partition_index);
+                        const auto base_col = base_x.at(number<1>{});
+                        const index_t col_threshold =
+                            static_cast<index_t>(seqlen_k_end) - kv_token_start - base_col;
+
+                        if constexpr(!FmhaMask::IsMasking)
+                        {
+                            // Non-causal: column + row OOB check with compile-time offsets
+                            const auto thread_row = q_origin.at(number<0>{}) + base_x.at(number<0>{});
+                            const auto seqlen_q = mask.GetTileRangeAlongY(
+                                kv_token_start, number<kM0>{}, number<kN0>{}).template at<1>();
+                            bool row_oob = kPadSeqLenQ && (thread_row >= seqlen_q);
+                            constexpr auto neg_inf = -numeric<SMPLComputeDataType>::infinity();
+
+                            static_for<0, kNIterPerWarp, 1>{}([&](auto niter) {
+                                static_for<0, kCM0PerLane_c, 1>{}([&](auto cm0) {
+                                    static_for<0, kCM1PerLane_c, 1>{}([&](auto cm1) {
+                                        const index_t col_off =
+                                            niter * kNPerMfma + cm0 * (kCMLane_c * kCM1PerLane_c) + cm1;
+                                        const index_t buf_idx =
+                                            niter * (kCM0PerLane_c * kCM1PerLane_c) + cm0 * kCM1PerLane_c + cm1;
+                                        if(row_oob || col_off >= col_threshold)
+                                        {
+                                            sp(sp_reg_idx).sp_compute.thread_buf_[buf_idx] = neg_inf;
+                                        }
+                                    });
+                                });
+                            });
+                        }
+                        else
+                        {
+                            // Causal: use LogitsMask with precomputed coordinates
+                            const auto thread_row = q_origin.at(number<0>{}) + base_x.at(number<0>{});
+                            const auto col_base_abs = kv_token_start + base_col;
+                            constexpr auto neg_inf = -numeric<SMPLComputeDataType>::infinity();
+
+                            static_for<0, kNIterPerWarp, 1>{}([&](auto niter) {
+                                static_for<0, kCM0PerLane_c, 1>{}([&](auto cm0) {
+                                    static_for<0, kCM1PerLane_c, 1>{}([&](auto cm1) {
+                                        const index_t col_off =
+                                            niter * kNPerMfma + cm0 * (kCMLane_c * kCM1PerLane_c) + cm1;
+                                        const index_t buf_idx =
+                                            niter * (kCM0PerLane_c * kCM1PerLane_c) + cm0 * kCM1PerLane_c + cm1;
+                                        const auto col = col_base_abs + col_off;
+                                        if(!variant.LogitsMask(variant_params,
+                                                              block_indices.batch_idx,
+                                                              thread_row,
+                                                              col,
+                                                              block_indices.qo_head_idx,
+                                                              block_indices.kv_head_idx))
+                                        {
+                                            sp(sp_reg_idx).sp_compute.thread_buf_[buf_idx] = neg_inf;
+                                        }
+                                    });
+                                });
+                            });
+                        }
                     }
                 }
             }
