@@ -1766,6 +1766,45 @@ CK_TILE_DEVICE void amd_async_buffer_load(CK_TILE_LDS_ADDR T* smem,
     if constexpr(oob_conditional_check)
         v_offset = flag ? v_offset : 0x7fffffff; // large offset to cause OOB access
 
+#if defined(__gfx950__) && CK_TILE_FMHA_V3_BUFFER_LOAD_LDS_INLINE_ASM
+    // Use inline asm to emit buffer_load_dwordx4 ... lds directly.
+    // This hides the operation from LLVM's SIInsertWaitcnts pass,
+    // which otherwise inserts vmcnt(0) before every ds_read when it
+    // sees outstanding buffer_load_lds instructions.
+    uint32_t lds_base = __builtin_amdgcn_readfirstlane(
+        (uint32_t)(uintptr_t)smem);
+    if constexpr(bytes == 16) {
+        asm volatile(
+            "s_mov_b32 m0, %[lds]\n"
+            "buffer_load_dwordx4 %[voff], %[rsrc], %[soff] offen offset:%[imm] lds"
+            :
+            : [lds] "s"(lds_base), [voff] "v"(v_offset),
+              [rsrc] "s"(rsrc), [soff] "s"(src_wave_addr_offset),
+              [imm] "n"(IMM)
+            : "m0"
+        );
+    } else if constexpr(bytes == 12) {
+        asm volatile(
+            "s_mov_b32 m0, %[lds]\n"
+            "buffer_load_dwordx3 %[voff], %[rsrc], %[soff] offen offset:%[imm] lds"
+            :
+            : [lds] "s"(lds_base), [voff] "v"(v_offset),
+              [rsrc] "s"(rsrc), [soff] "s"(src_wave_addr_offset),
+              [imm] "n"(IMM)
+            : "m0"
+        );
+    } else {
+        asm volatile(
+            "s_mov_b32 m0, %[lds]\n"
+            "buffer_load_dword %[voff], %[rsrc], %[soff] offen offset:%[imm] lds"
+            :
+            : [lds] "s"(lds_base), [voff] "v"(v_offset),
+              [rsrc] "s"(rsrc), [soff] "s"(src_wave_addr_offset),
+              [imm] "n"(IMM)
+            : "m0"
+        );
+    }
+#else
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wold-style-cast"
     // Use C-style cast to change address space without dropping llvm noalias attribute
@@ -1777,6 +1816,7 @@ CK_TILE_DEVICE void amd_async_buffer_load(CK_TILE_LDS_ADDR T* smem,
                                              /*imm*/ IMM,
                                              static_cast<index_t>(coherence));
 #pragma clang diagnostic pop
+#endif
 }
 
 template <index_t N,
