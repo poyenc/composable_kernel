@@ -1189,10 +1189,15 @@ struct BlockFmhaFwdV3Pipeline
             fmha_alu1_exp2_second(ps_pi);
             fmha_alu1_rest(ps_pi);
 
+            __builtin_amdgcn_sched_barrier(0);
             s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
+            __builtin_amdgcn_sched_barrier(0);
 
+            asm volatile("s_setprio 1" ::: "memory");
             auto xdl_SP_p23_reg_idx = ps_pi;
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
+            asm volatile("s_setprio 0" ::: "memory");
+            __builtin_amdgcn_sched_barrier(0);
         };
 
         if(num_total_loop > 0)
