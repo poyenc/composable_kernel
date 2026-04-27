@@ -581,15 +581,29 @@ struct BlockFmhaFwdV3Pipeline
         constexpr int K_mem_su_ld_insts = k_dram_window.get_num_of_access();
         constexpr int V_mem_su_ld_insts = v_dram_window.get_num_of_access();
 
+        // Compute byte stride for K/V advancement via SGPR soffset
+        // instead of VGPR-based move_tile_window coordinate updates
+        const index_t k_soffset_stride = amd_wave_read_first_lane(
+            static_cast<index_t>(
+                k_dram_window.get_bottom_tensor_view().get_tensor_descriptor().calculate_offset(
+                    make_tuple(kN0, 0)) * sizeof(KDataType)));
+        const index_t v_soffset_stride = amd_wave_read_first_lane(
+            static_cast<index_t>(
+                v_dram_window.get_bottom_tensor_view().get_tensor_descriptor().calculate_offset(
+                    make_tuple(kK1, 0)) * sizeof(VDataType)));
+        index_t k_wave_soffset = 0;
+        index_t v_wave_soffset = 0;
+
         auto K_mem_load = [&](auto k_lds_write_idx) {
             async_load_tile(k_lds_window_store(k_lds_write_idx),
                             k_dram_window,
                             number<-1>{},
-                            bool_constant<false>{});
+                            bool_constant<false>{},
+                            bool_constant<false>{},
+                            k_wave_soffset);
 
-            /// FIXME: use the future-predicting method to move the window
-            // move K tile windows
-            move_tile_window(k_dram_window, {kN0, 0});
+            // advance via SGPR soffset instead of VGPR coordinate update
+            k_wave_soffset += k_soffset_stride;
         };
 
         auto K_lds_load = [&](auto k_lds_read_idx) {
@@ -601,10 +615,12 @@ struct BlockFmhaFwdV3Pipeline
             async_load_tile(v_lds_window_store(v_lds_write_idx),
                             v_dram_window,
                             number<-1>{},
-                            bool_constant<false>{});
+                            bool_constant<false>{},
+                            bool_constant<false>{},
+                            v_wave_soffset);
 
-            /// FIXME: use the future-predicting method to move the window
-            move_tile_window(v_dram_window, {kK1, 0});
+            // advance via SGPR soffset instead of VGPR coordinate update
+            v_wave_soffset += v_soffset_stride;
         };
 
         auto V_lds_load = [&](auto v_lds_read_idx) {
@@ -666,20 +682,12 @@ struct BlockFmhaFwdV3Pipeline
             // (opus_attn pre-scales Q so its m is already in scaled domain)
             {
                 float max_diff = m.thread_buf_[0] - m_old.thread_buf_[0];
-                bool below;
-                if constexpr(kHasLogitsSoftCap)
-                {
-                    // softcap bounds S range; m is raw; rescale uses raw m
-                    below = (max_diff <= RESCALE_THRESHOLD);
-                }
-                else
-                {
-                    // Q pre-scaled: m is already in scaled domain
-                    below = (max_diff <= RESCALE_THRESHOLD);
-                }
-                bool all_below = (__builtin_amdgcn_ballot_w64(below) ==
-                                  __builtin_amdgcn_read_exec());
-                if(__builtin_expect(all_below, 1))
+                bool below = (max_diff <= RESCALE_THRESHOLD);
+                // s_cmp_eq_u64 vcc, exec → sets SCC; branch directly on SCC
+                if(__builtin_expect(
+                       __builtin_amdgcn_ballot_w64(below) ==
+                           __builtin_amdgcn_read_exec(),
+                       1))
                 {
                     m.thread_buf_[0] = m_old.thread_buf_[0];
                     need_rescale = false;
@@ -952,13 +960,13 @@ struct BlockFmhaFwdV3Pipeline
         auto cl_load = [&](auto load_type, auto mem_wr_idx, auto lds_rd_idx) {
             if constexpr(load_type == 0)
             {
-                K_lds_load(lds_rd_idx);   // ds_read (old buffer) FIRST
-                V_mem_load(mem_wr_idx);   // buffer_load to LDS (new buffer) SECOND
+                V_mem_load(mem_wr_idx);   // buffer_load (high-latency DRAM) FIRST
+                K_lds_load(lds_rd_idx);   // ds_read (low-latency LDS) SECOND
             }
             else
             {
-                V_lds_load(lds_rd_idx);   // ds_read (old buffer) FIRST
-                K_mem_load(mem_wr_idx);   // buffer_load to LDS (new buffer) SECOND
+                K_mem_load(mem_wr_idx);   // buffer_load (high-latency DRAM) FIRST
+                V_lds_load(lds_rd_idx);   // ds_read (low-latency LDS) SECOND
             }
         };
 
@@ -973,7 +981,6 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 ASM_MARKER("cluster0 (pi=0)");
                 s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_calc_gemm0(number<1>{});
@@ -988,7 +995,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 ASM_MARKER("cluster1 (pi=0)");
                 s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memK, number<1>{}, number<0>{});
@@ -1001,7 +1007,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 ASM_MARKER("cluster2 (pi=0)");
                 s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 asm volatile("s_setprio 1" ::: "memory");
@@ -1055,7 +1060,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 ASM_MARKER("cluster3 (pi=0)");
                 s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memV, number<0>{}, number<0>{});
@@ -1073,7 +1077,6 @@ struct BlockFmhaFwdV3Pipeline
                 __builtin_amdgcn_sched_barrier(0);
                 ASM_MARKER("cluster4 (pi=1)");
                 s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_calc_gemm0(number<0>{});
@@ -1088,7 +1091,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 ASM_MARKER("cluster5 (pi=1)");
                 s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memK, number<0>{}, number<1>{});
@@ -1101,7 +1103,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 ASM_MARKER("cluster6 (pi=1)");
                 s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 asm volatile("s_setprio 1" ::: "memory");
@@ -1155,7 +1156,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 ASM_MARKER("cluster7 (pi=1)");
                 s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
-                __builtin_amdgcn_sched_barrier(0);
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memV, number<1>{}, number<1>{});
@@ -1196,6 +1196,15 @@ struct BlockFmhaFwdV3Pipeline
             asm volatile("s_setprio 1" ::: "memory");
             auto xdl_SP_p23_reg_idx = ps_pi;
             gemm(xdl_SP_p23_reg_idx, /*gemm_idx=*/number<1>{});
+
+            // epilogue GEMM1 scheduling: interleave VALU (exp2/cvt_pk) with MFMAs
+            constexpr index_t kEpilogueMfma =
+                CoreLoopSchedulingParams<Problem>::kMfmaPerWarpGemm1;
+            static_for<0, kEpilogueMfma, 1>{}([&](auto) {
+                __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::MFMA, 1, 0);
+                __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VALU, 5, 0);
+            });
+
             asm volatile("s_setprio 0" ::: "memory");
             __builtin_amdgcn_sched_barrier(0);
         };
@@ -1314,10 +1323,10 @@ struct BlockFmhaFwdV3Pipeline
             const auto tmp       = [&]() {
                 if constexpr(FmhaMask::IsMasking)
                 {
-                    return l[i_idx] == 0.f ? 0.f : 1 / l[i_idx];
+                    return l[i_idx] == 0.f ? 0.f : __builtin_amdgcn_rcpf(l[i_idx]);
                 }
                 else
-                    return 1 / l[i_idx];
+                    return __builtin_amdgcn_rcpf(l[i_idx]);
             }();
             sweep_tile_span(o_spans[number<1>{}], [&](auto idx1) {
                 constexpr auto i_j_idx = make_tuple(idx0, idx1);

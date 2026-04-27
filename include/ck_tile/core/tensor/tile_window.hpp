@@ -577,7 +577,8 @@ struct tile_window_with_static_distribution
                                                LdsTileWindow_&& lds_tile,
                                                number<i_access_unsupport_>          = {},
                                                bool_constant<oob_conditional_check> = {},
-                                               bool_constant<static_move_ys>        = {}) const
+                                               bool_constant<static_move_ys>        = {},
+                                               index_t wave_soffset = 0) const
     {
         using LdsTileWindow = remove_cvref_t<LdsTileWindow_>;
         using LdsDataType   = typename LdsTileWindow::DataType;
@@ -654,7 +655,8 @@ struct tile_window_with_static_distribution
                         smem,
                         bottom_tensor_thread_coord,
                         offset + dram_ys_offset,
-                        bool_constant<oob_conditional_check>{});
+                        bool_constant<oob_conditional_check>{},
+                        wave_soffset);
                 else
                     this->get_bottom_tensor_view().template async_get_vectorized_elements<vector_t>(
                         smem,

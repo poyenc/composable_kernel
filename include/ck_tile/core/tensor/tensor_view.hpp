@@ -186,12 +186,13 @@ struct tensor_view
     async_get_vectorized_elements(CK_TILE_LDS_ADDR DataType_* smem,
                                   const TensorCoord& coord,
                                   index_t linear_offset,
-                                  bool_constant<oob_conditional_check> = {}) const
+                                  bool_constant<oob_conditional_check> = {},
+                                  index_t wave_soffset = 0) const
     {
         return buf_.template async_get<X>(
             smem,
             coord.get_offset() / PackedSize + linear_offset / PackedSize,
-            0,
+            wave_soffset,
             0, // linear_offset need to be imm and is not supported currently
             coordinate_has_valid_offset_assuming_top_index_is_valid(desc_, coord),
             bool_constant<oob_conditional_check>{});

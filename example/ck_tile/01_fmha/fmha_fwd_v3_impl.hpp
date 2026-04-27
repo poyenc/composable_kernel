@@ -130,11 +130,42 @@ struct get_fmha_fwd_v3_kernel
         Default2DEpilogueProblem<typename FmhaFwdTypeConfig<fmha_dtype>::OaccDataType,
                                  typename FmhaFwdTypeConfig<fmha_dtype>::ODataType,
                                  true, // kPadM
-                                 true, // kPadM
+                                 true, // kPadN
                                  true  // UseRawStore
                                  >>;
 
     using type = FmhaFwdV3Kernel<fmha_pipeline, epilogue>;
 };
+
+#if CK_FMHA_V3_ENABLE_NOPAD
+// nopad variant: kPadS_=false, kPadSK_=false
+// Use when seqlen_q % kM0 == 0 && seqlen_k % kN0 == 0 to eliminate
+// ~370 padding instructions (v_cndmask, OOB masking) from prologue
+template <typename DataType, bool kIsGroupMode, bool kHasLogitsSoftCap, bool kIsMasking>
+using fmha_fwd_v3_kernel_traits_nopad =
+    fmha_fwd_traits_<128,
+                     DataType,
+                     kIsGroupMode,
+                     256,
+                     64,
+                     128,
+                     128,
+                     64,
+                     128,
+                     true,
+                     ck_tile::BlockFmhaPipelineEnum::QRKSVS_ASYNC_TRLOAD_V3,
+                     kHasLogitsSoftCap,
+                     ck_tile::GenericAttentionMask<kIsMasking, /*IsLocal=*/false>,
+                     ck_tile::BlockAttentionBiasEnum::NO_BIAS,
+                     false,
+                     false,
+                     ck_tile::BlockAttentionQuantScaleEnum::NO_SCALE,
+                     false,
+                     false,
+                     false,
+                     false,
+                     true,
+                     false>;
+#endif
 
 } // namespace ck_tile

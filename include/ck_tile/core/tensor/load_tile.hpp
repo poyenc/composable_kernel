@@ -157,9 +157,10 @@ CK_TILE_DEVICE void async_load_tile_with_offset(LdsTileWindow_&& lds_tile,
                                                 index_t offset,
                                                 number<i_access>                         = {},
                                                 bool_constant<oob_conditional_check> occ = {},
-                                                bool_constant<static_move_ys> smy        = {})
+                                                bool_constant<static_move_ys> smy        = {},
+                                                index_t wave_soffset = 0)
 {
-    tile_window.async_load_with_offset(offset, lds_tile, number<i_access>{}, occ, smy);
+    tile_window.async_load_with_offset(offset, lds_tile, number<i_access>{}, occ, smy, wave_soffset);
 }
 
 template <typename LdsTileWindow_,
@@ -171,9 +172,10 @@ CK_TILE_DEVICE void async_load_tile(LdsTileWindow_&& lds_tile,
                                     const TileWindow_& tile_window,
                                     number<i_access>                         = {},
                                     bool_constant<oob_conditional_check> occ = {},
-                                    bool_constant<static_move_ys> smy        = {})
+                                    bool_constant<static_move_ys> smy        = {},
+                                    index_t wave_soffset = 0)
 {
-    async_load_tile_with_offset(lds_tile, tile_window, 0, number<i_access>{}, occ, smy);
+    async_load_tile_with_offset(lds_tile, tile_window, 0, number<i_access>{}, occ, smy, wave_soffset);
 }
 
 template <typename LdsTileWindow_,
