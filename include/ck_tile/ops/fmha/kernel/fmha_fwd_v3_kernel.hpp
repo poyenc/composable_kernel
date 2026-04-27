@@ -707,7 +707,9 @@ struct FmhaFwdV3Kernel
         const auto variant_params = [&] {
             if constexpr(kHasLogitsSoftCap)
             {
-                return ck_tile::LogitsSoftCapParams<FmhaMask, CK_TILE_FMHA_FWD_FAST_EXP2>{
+                // V3 pipeline always uses exp2 for softmax, so UseExp2 must be true
+                // to get correct domain conversion (log2) for softcap parameters
+                return ck_tile::LogitsSoftCapParams<FmhaMask, true>{
                     mask, scale_s, kargs.logits_soft_cap, kargs.logits_soft_cap_rcp};
             }
             else
