@@ -980,7 +980,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 __builtin_amdgcn_sched_barrier(0);
                 ASM_MARKER("cluster0 (pi=0)");
-                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_calc_gemm0(number<1>{});
@@ -994,7 +993,6 @@ struct BlockFmhaFwdV3Pipeline
             // --- Cluster 1: K_mem_load(1) + V_lds_load(0) + fmha_mask(sp[1]) ---
             {
                 ASM_MARKER("cluster1 (pi=0)");
-                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memK, number<1>{}, number<0>{});
@@ -1002,11 +1000,11 @@ struct BlockFmhaFwdV3Pipeline
                 fmha_mask(number<1>{});
 
                 __builtin_amdgcn_sched_barrier(0);
+                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
             }
             // --- Cluster 2: step_k(0) + alu0_max + rescale | step_k(1-3) + sub + exp2 ---
             {
                 ASM_MARKER("cluster2 (pi=0)");
-                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 asm volatile("s_setprio 1" ::: "memory");
@@ -1059,13 +1057,13 @@ struct BlockFmhaFwdV3Pipeline
             // --- Cluster 3: V_mem_load(0) + K_lds_load(0) + loop check ---
             {
                 ASM_MARKER("cluster3 (pi=0)");
-                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memV, number<0>{}, number<0>{});
 
                 Scheduler::schedule(number<0>{}, number<3>{});
                 kv_token_start += kN0;
+                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 if(num_total_loop <= ++i_total_loops)
                 {
                     return false;
@@ -1076,7 +1074,6 @@ struct BlockFmhaFwdV3Pipeline
             {
                 __builtin_amdgcn_sched_barrier(0);
                 ASM_MARKER("cluster4 (pi=1)");
-                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_calc_gemm0(number<0>{});
@@ -1090,7 +1087,6 @@ struct BlockFmhaFwdV3Pipeline
             // --- Cluster 5: K_mem_load(0) + V_lds_load(1) + fmha_mask(sp[0]) ---
             {
                 ASM_MARKER("cluster5 (pi=1)");
-                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memK, number<0>{}, number<1>{});
@@ -1098,11 +1094,11 @@ struct BlockFmhaFwdV3Pipeline
                 fmha_mask(number<0>{});
 
                 __builtin_amdgcn_sched_barrier(0);
+                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
             }
             // --- Cluster 6: step_k(0) + alu0_max + rescale | step_k(1-3) + sub + exp2 ---
             {
                 ASM_MARKER("cluster6 (pi=1)");
-                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 asm volatile("s_setprio 1" ::: "memory");
@@ -1155,13 +1151,13 @@ struct BlockFmhaFwdV3Pipeline
             // --- Cluster 7: V_mem_load(1) + K_lds_load(1) + loop check ---
             {
                 ASM_MARKER("cluster7 (pi=1)");
-                s_waitcnt<K_mem_su_ld_insts + V_mem_su_ld_insts>();
                 __builtin_amdgcn_s_barrier();
                 __builtin_amdgcn_sched_barrier(0);
                 cl_load(memV, number<1>{}, number<1>{});
 
                 Scheduler::schedule(number<0>{}, number<3>{});
                 kv_token_start += kN0;
+                s_waitcnt<waitcnt_arg::kMaxVmCnt, waitcnt_arg::kMaxExpCnt, 0>();
                 if(num_total_loop <= ++i_total_loops)
                 {
                     return false;
