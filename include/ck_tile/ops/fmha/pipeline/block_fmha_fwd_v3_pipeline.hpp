@@ -69,12 +69,12 @@ struct CoreLoopSchedulerDefaultBase
 
     CK_TILE_DEVICE static constexpr void schedule_load_phase()
     {
-        // ds_read (old LDS buffer) FIRST to avoid vmcnt(2) fence
-        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::DS_READ, 32, 0);
-        // buffer_load to LDS (new buffer) SECOND
+        // buffer_load FIRST: prefetch next tile into LDS (matches opus pattern)
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VMEM_READ, 1, 0);
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 1, 0);
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::VMEM_READ, 1, 0);
+        // ds_read SECOND: read current tile from LDS
+        __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::DS_READ, 32, 0);
         __builtin_amdgcn_sched_group_barrier(LLVMSchedGroupMask::SALU, 2, 0);
     }
 
