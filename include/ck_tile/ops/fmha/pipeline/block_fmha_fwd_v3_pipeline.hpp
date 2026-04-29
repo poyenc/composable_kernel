@@ -909,6 +909,12 @@ struct BlockFmhaFwdV3Pipeline
                             bool row_oob = kPadSeqLenQ && (thread_row >= seqlen_q);
                             constexpr auto neg_inf = -numeric<SMPLComputeDataType>::infinity();
 
+                            // Fold row_oob into threshold: when row OOB, threshold=0
+                            // makes col_off >= 0 always true, masking all elements.
+                            // Eliminates s_or_b64 vcc entirely.
+                            const index_t eff_threshold =
+                                row_oob ? index_t(0) : col_threshold;
+
                             static_for<0, kNIterPerWarp, 1>{}([&](auto niter) {
                                 static_for<0, kCM0PerLane_c, 1>{}([&](auto cm0) {
                                     static_for<0, kCM1PerLane_c, 1>{}([&](auto cm1) {
@@ -916,7 +922,7 @@ struct BlockFmhaFwdV3Pipeline
                                             niter * kNPerMfma + cm0 * (kCMLane_c * kCM1PerLane_c) + cm1;
                                         const index_t buf_idx =
                                             niter * (kCM0PerLane_c * kCM1PerLane_c) + cm0 * kCM1PerLane_c + cm1;
-                                        if(row_oob || col_off >= col_threshold)
+                                        if(col_off >= eff_threshold)
                                         {
                                             sp(sp_reg_idx).sp_compute.thread_buf_[buf_idx] = neg_inf;
                                         }
